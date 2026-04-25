@@ -1,0 +1,354 @@
+"""Interactive Plotly chart builders.
+
+All charts use a consistent visual identity defined in `config.PALETTE`.
+Functions return Plotly figures that can be directly rendered with
+`st.plotly_chart`.
+"""
+
+from __future__ import annotations
+
+from typing import Iterable
+
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+from config import PALETTE, PortfolioParams
+from models import SimulationResult
+
+
+_LAYOUT_DEFAULTS = dict(
+    template="plotly_white",
+    font=dict(family="Inter, system-ui, sans-serif", size=13, color="#2C3E50"),
+    title_font=dict(size=18, color="#1F3A5F"),
+    margin=dict(l=60, r=40, t=70, b=50),
+    plot_bgcolor="white",
+    paper_bgcolor="white",
+    hoverlabel=dict(font_size=12, font_family="Inter"),
+    legend=dict(
+        orientation="h", yanchor="bottom", y=-0.22,
+        xanchor="center", x=0.5,
+        bgcolor="rgba(255,255,255,0.9)",
+    ),
+)
+
+
+def _format_currency(value: float) -> str:
+    return f"R$ {value:,.0f}".replace(",", ".")
+
+
+def patrimony_evolution_chart(results: Iterable[SimulationResult]) -> go.Figure:
+    """Line chart with patrimony evolution over time."""
+    fig = go.Figure()
+    for r in results:
+        fig.add_trace(go.Scatter(
+            x=r.years,
+            y=r.patrimony,
+            mode="lines+markers",
+            name=r.label,
+            line=dict(color=r.color, width=3),
+            marker=dict(size=7),
+            hovertemplate=(
+                "<b>%{fullData.name}</b><br>"
+                "Ano %{x}<br>"
+                "Patrimônio: R$ %{y:,.0f}<extra></extra>"
+            ),
+        ))
+
+    fig.update_layout(
+        **_LAYOUT_DEFAULTS,
+        title="Evolução do Patrimônio ao Longo do Tempo",
+        xaxis_title="Anos",
+        yaxis_title="Patrimônio (R$)",
+        hovermode="x unified",
+        height=460,
+    )
+    fig.update_yaxes(tickformat=",.0f", tickprefix="R$ ")
+    fig.update_xaxes(dtick=1)
+    return fig
+
+
+def annual_income_chart(results: Iterable[SimulationResult]) -> go.Figure:
+    """Annual income generation over time."""
+    fig = go.Figure()
+    for r in results:
+        fig.add_trace(go.Scatter(
+            x=r.years,
+            y=r.annual_income / 12,  # monthly
+            mode="lines+markers",
+            name=r.label,
+            line=dict(color=r.color, width=3),
+            marker=dict(size=7),
+            hovertemplate=(
+                "<b>%{fullData.name}</b><br>"
+                "Ano %{x}<br>"
+                "Renda mensal: R$ %{y:,.0f}<extra></extra>"
+            ),
+        ))
+
+    fig.update_layout(
+        **_LAYOUT_DEFAULTS,
+        title="Renda Mensal Gerada (R$)",
+        xaxis_title="Anos",
+        yaxis_title="Renda Mensal (R$)",
+        hovermode="x unified",
+        height=420,
+    )
+    fig.update_yaxes(tickformat=",.0f", tickprefix="R$ ")
+    fig.update_xaxes(dtick=1)
+    return fig
+
+
+def cost_breakdown_chart(costs: dict[str, float]) -> go.Figure:
+    """Horizontal bar chart of real estate costs."""
+    sorted_items = sorted(costs.items(), key=lambda x: x[1], reverse=False)
+    labels = [k for k, _ in sorted_items]
+    values = [v for _, v in sorted_items]
+    total = sum(values)
+    pct = [v / total * 100 for v in values]
+
+    fig = go.Figure(go.Bar(
+        x=values,
+        y=labels,
+        orientation="h",
+        marker=dict(
+            color=values,
+            colorscale=[[0, "#7B241C"], [1, "#E74C3C"]],
+            line=dict(color="white", width=1.5),
+        ),
+        text=[f"R$ {v:,.0f} ({p:.1f}%)".replace(",", ".") for v, p in zip(values, pct)],
+        textposition="outside",
+        hovertemplate="<b>%{y}</b><br>R$ %{x:,.0f}<extra></extra>",
+    ))
+
+    fig.update_layout(
+        **{**_LAYOUT_DEFAULTS, "showlegend": False},
+        title=f"Custos Anuais do Imóvel — Total: R$ {total:,.0f}".replace(",", "."),
+        xaxis_title="Custo Anual (R$)",
+        height=380,
+    )
+    fig.update_xaxes(tickformat=",.0f", tickprefix="R$ ", range=[0, max(values) * 1.4])
+    return fig
+
+
+def portfolio_donut_chart(portfolio: PortfolioParams) -> go.Figure:
+    """Donut chart showing portfolio allocation."""
+    colors = [
+        PALETTE["fii_papel"], PALETTE["fii_tijolo"],
+        PALETTE["acoes_br"], PALETTE["acoes_us"], PALETTE["rf"],
+    ]
+
+    labels = [a.name for a in portfolio.assets]
+    weights = [a.weight * 100 for a in portfolio.assets]
+    yields_text = [
+        f"DY {a.expected_yield:.1%} | Peso {a.weight:.0%}"
+        for a in portfolio.assets
+    ]
+
+    fig = go.Figure(go.Pie(
+        labels=labels,
+        values=weights,
+        hole=0.55,
+        marker=dict(colors=colors[:len(labels)], line=dict(color="white", width=2)),
+        textinfo="label+percent",
+        textposition="outside",
+        customdata=yields_text,
+        hovertemplate="<b>%{label}</b><br>%{customdata}<br>Valor: R$ %{value:.0f}k<extra></extra>",
+    ))
+
+    blended = portfolio.blended_yield()
+    fig.update_layout(
+        **{**_LAYOUT_DEFAULTS, "showlegend": False},
+        title="Alocação da Carteira",
+        annotations=[dict(
+            text=f"<b>R$ {portfolio.capital/1000:,.0f}k</b><br>"
+                 f"<span style='color:#27AE60'>DY blended {blended:.1%}</span>".replace(",", "."),
+            x=0.5, y=0.5, showarrow=False, font=dict(size=15),
+        )],
+        height=440,
+    )
+    return fig
+
+
+def sensitivity_tornado_chart(df: pd.DataFrame, base_value: float) -> go.Figure:
+    """Tornado chart for sensitivity analysis."""
+    df = df.copy()
+    df["Δ Pessimista"] = df["Cenário Pessimista"] - base_value
+    df["Δ Otimista"] = df["Cenário Otimista"] - base_value
+    df["Spread"] = df["Δ Otimista"].abs() + df["Δ Pessimista"].abs()
+    df = df.sort_values("Spread", ascending=True)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        y=df["Parâmetro"],
+        x=df["Δ Pessimista"],
+        orientation="h",
+        name="Pessimista",
+        marker=dict(color=PALETTE["imovel"]),
+        hovertemplate="<b>%{y}</b><br>Δ: R$ %{x:,.0f}<extra></extra>",
+    ))
+    fig.add_trace(go.Bar(
+        y=df["Parâmetro"],
+        x=df["Δ Otimista"],
+        orientation="h",
+        name="Otimista",
+        marker=dict(color=PALETTE["carteira"]),
+        hovertemplate="<b>%{y}</b><br>Δ: R$ %{x:,.0f}<extra></extra>",
+    ))
+    fig.add_vline(x=0, line=dict(color="#34495E", width=2))
+
+    fig.update_layout(
+        **_LAYOUT_DEFAULTS,
+        title="Análise de Sensibilidade — Impacto no Patrimônio Final",
+        xaxis_title="Variação do Patrimônio (R$)",
+        barmode="overlay",
+        height=420,
+    )
+    fig.update_xaxes(tickformat=",.0f", tickprefix="R$ ")
+    return fig
+
+
+def risk_return_scatter() -> go.Figure:
+    """Risk vs return scatter map of available asset classes."""
+    assets = [
+        ("Tesouro Selic",          0.5,  12.0, PALETTE["rf"],         700),
+        ("Tesouro IPCA+",          6.0,  11.5, "#E67E22",             700),
+        ("Imóvel residencial",     8.0,   9.65, PALETTE["imovel"],   900),
+        ("FIIs (IFIX)",           12.0,  12.0, PALETTE["fii_papel"], 900),
+        ("Ações BR Dividendos",   22.0,  13.0, PALETTE["acoes_br"], 800),
+        ("Dividend Aristocrats",  14.0,  11.0, PALETTE["acoes_us"], 800),
+        ("Carteira Diversificada", 9.0, 10.5, PALETTE["carteira"], 1100),
+    ]
+
+    fig = go.Figure()
+    for name, vol, ret, color, size in assets:
+        fig.add_trace(go.Scatter(
+            x=[vol], y=[ret], mode="markers+text",
+            marker=dict(size=size / 30, color=color, opacity=0.8,
+                        line=dict(color="white", width=2)),
+            text=[name], textposition="top center",
+            textfont=dict(size=11, color="#2C3E50"),
+            hovertemplate=f"<b>{name}</b><br>Volatilidade: {vol:.1f}%<br>Retorno: {ret:.1f}%<extra></extra>",
+            showlegend=False,
+        ))
+
+    fig.update_layout(
+        **_LAYOUT_DEFAULTS,
+        title="Mapa Risco × Retorno (a.a.)",
+        xaxis_title="Volatilidade Anualizada (%)",
+        yaxis_title="Retorno Esperado Nominal (%)",
+        height=460,
+    )
+    fig.update_xaxes(ticksuffix="%", range=[-1, 26])
+    fig.update_yaxes(ticksuffix="%", range=[8, 14.5])
+    return fig
+
+
+def yield_comparison_bars(yields: dict[str, float], reference_lines: dict[str, float]) -> go.Figure:
+    """Bar chart comparing yields across asset classes."""
+    labels = list(yields.keys())
+    values = [v * 100 for v in yields.values()]
+
+    colors = [
+        PALETTE["imovel"], PALETTE["imovel"], PALETTE["fii_papel"],
+        PALETTE["acoes_br"], PALETTE["rf"], PALETTE["carteira"],
+    ][:len(labels)]
+
+    fig = go.Figure(go.Bar(
+        x=labels, y=values, marker=dict(color=colors, line=dict(color="white", width=2)),
+        text=[f"{v:.2f}%" for v in values], textposition="outside",
+        hovertemplate="<b>%{x}</b><br>Yield: %{y:.2f}%<extra></extra>",
+    ))
+
+    for ref_name, ref_value in reference_lines.items():
+        fig.add_hline(
+            y=ref_value * 100,
+            line=dict(color="#7F8C8D", width=1.5, dash="dot"),
+            annotation_text=f"{ref_name}: {ref_value:.2%}",
+            annotation_position="right",
+        )
+
+    fig.update_layout(
+        **{**_LAYOUT_DEFAULTS, "showlegend": False},
+        title="Yields Anuais Comparados (Cenário Atual)",
+        yaxis_title="Yield Anual (%)",
+        height=420,
+    )
+    fig.update_yaxes(ticksuffix="%", range=[0, max(values) * 1.25])
+    return fig
+
+
+def income_vs_costs_waterfall(real_estate_params) -> go.Figure:
+    """Waterfall chart showing rent → net income for real estate."""
+    gross = real_estate_params.gross_annual_rent()
+    iptu = real_estate_params.annual_iptu()
+    vacancy = real_estate_params.vacancy_loss()
+    maint = real_estate_params.maintenance_annual
+    mgmt = real_estate_params.management_fee()
+    insurance = real_estate_params.insurance_annual
+    tax = real_estate_params.income_tax_amount()
+    net = real_estate_params.net_annual_income()
+
+    fig = go.Figure(go.Waterfall(
+        orientation="v",
+        measure=["absolute", "relative", "relative", "relative",
+                 "relative", "relative", "relative", "total"],
+        x=["Receita Bruta", "IPTU", "Vacância", "Manutenção",
+           "Adm. Imobiliária", "Seguro", "IR", "Receita Líquida"],
+        y=[gross, -iptu, -vacancy, -maint, -mgmt, -insurance, -tax, net],
+        text=[f"R$ {v:,.0f}".replace(",", ".") for v in
+              [gross, -iptu, -vacancy, -maint, -mgmt, -insurance, -tax, net]],
+        textposition="outside",
+        connector=dict(line=dict(color="#95A5A6", width=1)),
+        increasing=dict(marker=dict(color=PALETTE["carteira"])),
+        decreasing=dict(marker=dict(color=PALETTE["imovel"])),
+        totals=dict(marker=dict(color=PALETTE["neutral"])),
+    ))
+
+    fig.update_layout(
+        **{**_LAYOUT_DEFAULTS, "showlegend": False},
+        title="Decomposição da Receita Anual do Imóvel",
+        yaxis_title="Valor Anual (R$)",
+        height=440,
+    )
+    fig.update_yaxes(tickformat=",.0f", tickprefix="R$ ")
+    return fig
+
+
+def tax_comparison_chart(df: pd.DataFrame) -> go.Figure:
+    """Bar chart comparing tax burden between scenarios."""
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=("Imposto Anual (R$)", "Carga Tributária Efetiva (%)"),
+        horizontal_spacing=0.15,
+    )
+
+    fig.add_trace(
+        go.Bar(
+            x=df["Cenário"], y=df["Imposto Anual"],
+            marker=dict(color=[PALETTE["imovel"], PALETTE["carteira"]]),
+            text=[f"R$ {v:,.0f}".replace(",", ".") for v in df["Imposto Anual"]],
+            textposition="outside", showlegend=False,
+            hovertemplate="<b>%{x}</b><br>Imposto: R$ %{y:,.0f}<extra></extra>",
+        ),
+        row=1, col=1,
+    )
+    fig.add_trace(
+        go.Bar(
+            x=df["Cenário"], y=df["Carga Tributária Efetiva"] * 100,
+            marker=dict(color=[PALETTE["imovel"], PALETTE["carteira"]]),
+            text=[f"{v*100:.1f}%" for v in df["Carga Tributária Efetiva"]],
+            textposition="outside", showlegend=False,
+            hovertemplate="<b>%{x}</b><br>Carga: %{y:.2f}%<extra></extra>",
+        ),
+        row=1, col=2,
+    )
+
+    fig.update_layout(
+        **{**_LAYOUT_DEFAULTS, "showlegend": False},
+        title="Comparativo Tributário",
+        height=400,
+    )
+    fig.update_yaxes(tickformat=",.0f", tickprefix="R$ ", row=1, col=1)
+    fig.update_yaxes(ticksuffix="%", row=1, col=2)
+    return fig
