@@ -16,6 +16,7 @@ import streamlit as st
 
 from config import (
     BenchmarkParams,
+    MacroParams,
     PALETTE,
     PortfolioParams,
     RealEstateParams,
@@ -91,7 +92,7 @@ st.markdown("""
 
 # ---------- Sidebar: Parameters ----------
 
-def render_sidebar(macro) -> tuple[RealEstateParams, PortfolioParams, BenchmarkParams, int, bool]:
+def render_sidebar(macro: MacroParams) -> tuple[RealEstateParams, PortfolioParams, BenchmarkParams, int, bool]:
     """Build sidebar inputs and return parameter objects."""
     st.sidebar.title("⚙️ Parâmetros")
     st.sidebar.caption(f"Cenário macroeconômico: {TODAY_LABEL} — {macro.source_label}")
@@ -293,7 +294,7 @@ def render_real_estate(re_params: RealEstateParams) -> None:
         """)
 
 
-def render_portfolio(pf_params: PortfolioParams, macro) -> None:
+def render_portfolio(pf_params: PortfolioParams, macro: MacroParams) -> None:
     """Portfolio allocation analysis."""
     st.markdown("## 📈 Análise da Carteira Diversificada")
 
