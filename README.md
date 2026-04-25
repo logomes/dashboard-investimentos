@@ -13,10 +13,16 @@ Dashboard interativo para análise comparativa de investimento em imóvel reside
 ```
 dashboard/
 ├── app.py              # Entry point Streamlit
-├── config.py           # Parâmetros e constantes (dataclasses)
+├── config.py           # Parâmetros + dataclasses (RealEstate, Portfolio, Benchmark, Macro)
 ├── models.py           # Engine de simulação financeira
 ├── charts.py           # Geradores de gráficos Plotly
-└── requirements.txt
+├── data_sources/
+│   └── bcb.py          # Cliente HTTP da API SGS do Banco Central
+├── services/
+│   └── macro.py        # Cache + fallback dos indicadores macro
+├── tests/              # Suíte pytest (test_bcb, test_macro, test_models)
+├── requirements.txt
+└── requirements-dev.txt
 ```
 
 ## Setup

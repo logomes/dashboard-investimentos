@@ -170,6 +170,22 @@ def render_sidebar(macro: MacroParams) -> tuple[RealEstateParams, PortfolioParam
 
 # ---------- Page sections ----------
 
+def _run_simulations(
+    re_params: RealEstateParams,
+    pf_params: PortfolioParams,
+    bench_params: BenchmarkParams,
+    horizon: int,
+    reinvest: bool,
+    ipca: float,
+):
+    """Run all three simulations consistently for both overview and export."""
+    return (
+        simulate_real_estate(re_params, horizon, reinvest),
+        simulate_portfolio(pf_params, horizon, reinvest, ipca=ipca),
+        simulate_benchmark(bench_params, horizon),
+    )
+
+
 def render_overview(re_params: RealEstateParams,
                     pf_params: PortfolioParams,
                     bench_params: BenchmarkParams,
@@ -177,9 +193,9 @@ def render_overview(re_params: RealEstateParams,
                     reinvest: bool,
                     macro: MacroParams) -> None:
     """Top-level KPI dashboard and patrimony evolution."""
-    re_result = simulate_real_estate(re_params, horizon, reinvest)
-    pf_result = simulate_portfolio(pf_params, horizon, reinvest, ipca=macro.ipca)
-    bench_result = simulate_benchmark(bench_params, horizon)
+    re_result, pf_result, bench_result = _run_simulations(
+        re_params, pf_params, bench_params, horizon, reinvest, macro.ipca,
+    )
 
     final_re = re_result.patrimony[-1]
     final_pf = pf_result.patrimony[-1]
@@ -435,9 +451,9 @@ def render_export(re_params: RealEstateParams,
     """Export simulation results to CSV."""
     st.markdown("## 📥 Exportar Dados")
 
-    re_result = simulate_real_estate(re_params, horizon, reinvest)
-    pf_result = simulate_portfolio(pf_params, horizon, reinvest, ipca=macro.ipca)
-    bench_result = simulate_benchmark(bench_params, horizon)
+    re_result, pf_result, bench_result = _run_simulations(
+        re_params, pf_params, bench_params, horizon, reinvest, macro.ipca,
+    )
 
     df = build_comparison_dataframe([re_result, pf_result, bench_result])
 
