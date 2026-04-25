@@ -37,7 +37,7 @@ def test_fetch_macro_success(mocker):
             return _mock_response([{"data": "01/04/2026", "valor": "5.30"}])
         raise AssertionError(f"unexpected url: {url}")
 
-    mocker.patch("data_sources.bcb.requests.get", side_effect=fake_get)
+    mock_get = mocker.patch("data_sources.bcb.requests.get", side_effect=fake_get)
     reading = fetch_macro()
 
     assert isinstance(reading, BcbReading)
@@ -49,9 +49,9 @@ def test_fetch_macro_success(mocker):
     assert isinstance(reading.fetched_at, datetime)
 
     # Timeout must always be forwarded
-    import data_sources.bcb as bcb_module
-    for call in bcb_module.requests.get.call_args_list:
-        assert call.kwargs.get("timeout") == 5.0
+    from data_sources.bcb import DEFAULT_TIMEOUT
+    for call in mock_get.call_args_list:
+        assert call.kwargs.get("timeout") == DEFAULT_TIMEOUT
 
 
 def test_fetch_macro_timeout(mocker):
@@ -129,7 +129,9 @@ def test_fetch_macro_bad_valor_in_ipca_payload(mocker):
             return _mock_response(bad_ipca)
         if "bcdata.sgs.12" in url:
             return _mock_response([{"data": "01/04/2026", "valor": "14.65"}])
-        return _mock_response([{"data": "01/04/2026", "valor": "5.30"}])
+        if "bcdata.sgs.1" in url:
+            return _mock_response([{"data": "01/04/2026", "valor": "5.30"}])
+        raise AssertionError(f"unexpected url: {url}")
 
     mocker.patch("data_sources.bcb.requests.get", side_effect=fake_get)
     with pytest.raises(BcbApiError):
