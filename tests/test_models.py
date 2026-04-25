@@ -100,7 +100,8 @@ def test_contribution_with_reinvest_false():
     """When reinvest=False, contributions still grow capital, yields are distributed."""
     pf = _make_simple_portfolio(
         capital=10_000, monthly_contribution=500, indexed=False)
-    # capital_gain=0 in this test setup, so patrimony grows only via contributions
+    # capital_gain=0 here means rate=0 when reinvest=False, so contributions
+    # accumulate at face value (no compounding within this test).
     result = simulate_portfolio(pf, horizon_years=3,
                                 reinvest_income=False, ipca=0.0)
 

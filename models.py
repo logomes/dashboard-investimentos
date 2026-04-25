@@ -92,10 +92,7 @@ def simulate_portfolio(
     yield_only = params.blended_yield()
 
     # Vectorized base patrimony (no contributions)
-    if reinvest_income:
-        patrimony = params.capital * (1 + rate) ** years
-    else:
-        patrimony = params.capital * (1 + params.blended_capital_gain()) ** years
+    patrimony = params.capital * (1 + rate) ** years
 
     # Add contributions (begin-of-year), compounded at `rate` until end-of-year y
     monthly = params.monthly_contribution
