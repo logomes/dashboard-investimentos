@@ -19,6 +19,27 @@ USD_BRL: Final[float] = 5.30
 TODAY_LABEL: Final[str] = "Abril/2026"
 
 
+@dataclass(slots=True)
+class MacroParams:
+    """Macro indicators consumed by the app. May come from BCB live or fallback."""
+    selic: float
+    ipca: float
+    cdi: float
+    usd_brl: float
+    is_stale: bool                       # True when fallback values are used
+    source_label: str                    # "BCB SGS (live)" or "Fallback (Abr/2026)"
+
+
+MACRO_FALLBACK: Final[MacroParams] = MacroParams(
+    selic=SELIC_RATE,
+    ipca=IPCA_EXPECTED,
+    cdi=CDI_RATE,
+    usd_brl=USD_BRL,
+    is_stale=True,
+    source_label=f"Fallback ({TODAY_LABEL})",
+)
+
+
 # ---------- Real Estate defaults (R$ 230k in São Paulo) ----------
 
 @dataclass(slots=True)
