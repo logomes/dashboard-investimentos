@@ -19,12 +19,9 @@ from config import (
     PALETTE,
     PortfolioParams,
     RealEstateParams,
-    SELIC_RATE,
-    IPCA_EXPECTED,
-    CDI_RATE,
-    USD_BRL,
     TODAY_LABEL,
 )
+from services.macro import get_macro_params
 from models import (
     annual_tax_comparison,
     build_comparison_dataframe,
@@ -94,10 +91,10 @@ st.markdown("""
 
 # ---------- Sidebar: Parameters ----------
 
-def render_sidebar() -> tuple[RealEstateParams, PortfolioParams, BenchmarkParams, int, bool]:
+def render_sidebar(macro) -> tuple[RealEstateParams, PortfolioParams, BenchmarkParams, int, bool]:
     """Build sidebar inputs and return parameter objects."""
     st.sidebar.title("⚙️ Parâmetros")
-    st.sidebar.caption(f"Cenário macroeconômico: {TODAY_LABEL}")
+    st.sidebar.caption(f"Cenário macroeconômico: {TODAY_LABEL} — {macro.source_label}")
 
     capital = st.sidebar.number_input(
         "Capital inicial (R$)",
@@ -142,7 +139,12 @@ def render_sidebar() -> tuple[RealEstateParams, PortfolioParams, BenchmarkParams
     st.sidebar.subheader("📊 Benchmark RF")
     bench_params = BenchmarkParams(capital=capital)
     bench_params.selic_rate = st.sidebar.slider(
-        "Taxa Selic (%)", 5.0, 20.0, SELIC_RATE * 100, 0.25) / 100
+        "Taxa Selic (%)", 5.0, 20.0, macro.selic * 100, 0.25) / 100
+
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🔄 Recarregar dados macro", use_container_width=True):
+        get_macro_params.clear()
+        st.rerun()
 
     return re_params, pf_params, bench_params, horizon, reinvest
 
@@ -291,7 +293,7 @@ def render_real_estate(re_params: RealEstateParams) -> None:
         """)
 
 
-def render_portfolio(pf_params: PortfolioParams) -> None:
+def render_portfolio(pf_params: PortfolioParams, macro) -> None:
     """Portfolio allocation analysis."""
     st.markdown("## 📈 Análise da Carteira Diversificada")
 
@@ -327,11 +329,11 @@ def render_portfolio(pf_params: PortfolioParams) -> None:
         "Imóvel líquido": 0.0415,
         "FIIs (IFIX)": 0.118,
         "Ações BR": 0.09,
-        "Tesouro Selic líq.": SELIC_RATE * (1 - 0.175),
+        "Tesouro Selic líq.": macro.selic * (1 - 0.175),
         "Carteira blended": pf_params.blended_yield(),
     }
     st.plotly_chart(
-        yield_comparison_bars(yields, {"Selic": SELIC_RATE, "IPCA": IPCA_EXPECTED}),
+        yield_comparison_bars(yields, {"Selic": macro.selic, "IPCA": macro.ipca}),
         use_container_width=True,
     )
 
@@ -433,14 +435,22 @@ def render_export(re_params: RealEstateParams,
 # ---------- Main ----------
 
 def main() -> None:
+    macro = get_macro_params()
+
     st.title("📊 Imóvel vs. Carteira Diversificada")
     st.caption(
-        f"**Análise Buy & Hold** — Macro: Selic {SELIC_RATE:.2%} | "
-        f"IPCA esp. {IPCA_EXPECTED:.2%} | CDI {CDI_RATE:.2%} | "
-        f"USD/BRL {USD_BRL:.2f} ({TODAY_LABEL})"
+        f"**Análise Buy & Hold** — Macro: Selic {macro.selic:.2%} | "
+        f"IPCA esp. {macro.ipca:.2%} | CDI {macro.cdi:.2%} | "
+        f"USD/BRL {macro.usd_brl:.2f} ({macro.source_label})"
     )
 
-    re_params, pf_params, bench_params, horizon, reinvest = render_sidebar()
+    if macro.is_stale:
+        st.warning(
+            "⚠️ Indicadores macro indisponíveis ao vivo. Usando referências de "
+            f"{TODAY_LABEL}. Tente recarregar em alguns minutos."
+        )
+
+    re_params, pf_params, bench_params, horizon, reinvest = render_sidebar(macro)
 
     tabs = st.tabs([
         "📌 Visão Geral",
@@ -456,7 +466,7 @@ def main() -> None:
     with tabs[1]:
         render_real_estate(re_params)
     with tabs[2]:
-        render_portfolio(pf_params)
+        render_portfolio(pf_params, macro)
     with tabs[3]:
         render_sensitivity(re_params, horizon)
     with tabs[4]:
@@ -468,7 +478,7 @@ def main() -> None:
     st.caption(
         "💡 Dashboard técnico para análise de cenário. "
         "Não constitui recomendação formal de investimento. "
-        "Premissas baseadas no cenário macro de Abr/2026."
+        f"Premissas baseadas em {macro.source_label}."
     )
 
 
