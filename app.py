@@ -122,8 +122,26 @@ def render_sidebar(macro: MacroParams) -> tuple[RealEstateParams, PortfolioParam
         "IR sobre aluguel (%)", 0.0, 27.5, 7.5, 0.5) / 100
 
     st.sidebar.markdown("---")
+    st.sidebar.subheader("💰 Aporte mensal (Carteira)")
+    monthly_contribution = st.sidebar.number_input(
+        "Valor mensal (R$, em valor de hoje)",
+        min_value=0.0, max_value=100_000.0, value=0.0, step=100.0,
+        format="%.0f",
+        help="Valor adicionado mensalmente à carteira. Imóvel não recebe aportes.",
+    )
+    indexed = st.sidebar.checkbox(
+        "Indexar pelo IPCA",
+        value=True,
+        help="Quando ligado, o aporte cresce ano a ano pela inflação esperada (mantém poder de compra).",
+    )
+
+    st.sidebar.markdown("---")
     st.sidebar.subheader("📈 Carteira Diversificada")
-    pf_params = PortfolioParams(capital=capital)
+    pf_params = PortfolioParams(
+        capital=capital,
+        monthly_contribution=monthly_contribution,
+        contribution_inflation_indexed=indexed,
+    )
     with st.sidebar.expander("Ajustar pesos e yields", expanded=False):
         for asset in pf_params.assets:
             st.markdown(f"**{asset.name}**")
@@ -156,10 +174,11 @@ def render_overview(re_params: RealEstateParams,
                     pf_params: PortfolioParams,
                     bench_params: BenchmarkParams,
                     horizon: int,
-                    reinvest: bool) -> None:
+                    reinvest: bool,
+                    macro: MacroParams) -> None:
     """Top-level KPI dashboard and patrimony evolution."""
     re_result = simulate_real_estate(re_params, horizon, reinvest)
-    pf_result = simulate_portfolio(pf_params, horizon, reinvest)
+    pf_result = simulate_portfolio(pf_params, horizon, reinvest, ipca=macro.ipca)
     bench_result = simulate_benchmark(bench_params, horizon)
 
     final_re = re_result.patrimony[-1]
@@ -411,12 +430,13 @@ def render_export(re_params: RealEstateParams,
                   pf_params: PortfolioParams,
                   bench_params: BenchmarkParams,
                   horizon: int,
-                  reinvest: bool) -> None:
+                  reinvest: bool,
+                  macro: MacroParams) -> None:
     """Export simulation results to CSV."""
     st.markdown("## 📥 Exportar Dados")
 
     re_result = simulate_real_estate(re_params, horizon, reinvest)
-    pf_result = simulate_portfolio(pf_params, horizon, reinvest)
+    pf_result = simulate_portfolio(pf_params, horizon, reinvest, ipca=macro.ipca)
     bench_result = simulate_benchmark(bench_params, horizon)
 
     df = build_comparison_dataframe([re_result, pf_result, bench_result])
@@ -463,7 +483,7 @@ def main() -> None:
     ])
 
     with tabs[0]:
-        render_overview(re_params, pf_params, bench_params, horizon, reinvest)
+        render_overview(re_params, pf_params, bench_params, horizon, reinvest, macro)
     with tabs[1]:
         render_real_estate(re_params)
     with tabs[2]:
@@ -473,7 +493,7 @@ def main() -> None:
     with tabs[4]:
         render_taxes(re_params, pf_params)
     with tabs[5]:
-        render_export(re_params, pf_params, bench_params, horizon, reinvest)
+        render_export(re_params, pf_params, bench_params, horizon, reinvest, macro)
 
     st.markdown("---")
     st.caption(

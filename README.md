@@ -35,7 +35,7 @@ Acesse `http://localhost:8501` no navegador.
 
 - **Visão Geral**: KPIs, evolução do patrimônio, renda mensal, mapa risco × retorno
 - **Imóvel**: decomposição waterfall de receita/custos, breakdown de custos anuais, custos de aquisição
-- **Carteira**: alocação por classe (donut), yields comparados
+- **Carteira**: alocação por classe (donut), yields comparados, aporte mensal opcional indexado pelo IPCA
 - **Sensibilidade**: tornado chart com variação de 6 parâmetros-chave
 - **Tributação**: comparação direta de carga tributária efetiva
 - **Exportar**: download da simulação completa em CSV
@@ -56,6 +56,10 @@ Todos os parâmetros são editáveis via sidebar:
 - CDI: 14,65%
 - USD/BRL: 5,30
 - DY médio IFIX: 11,80%
+
+## Dados macro ao vivo
+
+Os indicadores Selic, IPCA, CDI e USD/BRL são buscados ao vivo da API SGS do Banco Central, com cache de 24h. Em caso de falha (timeout, indisponibilidade), o app usa valores de referência hardcoded e exibe banner de aviso. Os sliders de macro permanecem editáveis para simulação de cenários.
 
 ## Observação
 
