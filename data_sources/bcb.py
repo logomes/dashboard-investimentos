@@ -83,6 +83,10 @@ def fetch_macro(timeout: float = DEFAULT_TIMEOUT) -> BcbReading:
     """Fetch the 4 macro indicators. All-or-nothing: any failure raises BcbApiError."""
     selic_payload = _fetch_series(SERIES_SELIC_META, 1, timeout)
     ipca_payload = _fetch_series(SERIES_IPCA_MONTHLY, 12, timeout)
+    if len(ipca_payload) < 12:
+        raise BcbApiError(
+            f"invalid_payload: expected 12 IPCA months, got {len(ipca_payload)}"
+        )
     cdi_payload = _fetch_series(SERIES_CDI_ANNUAL, 1, timeout)
     usd_payload = _fetch_series(SERIES_USD_BRL, 1, timeout)
 

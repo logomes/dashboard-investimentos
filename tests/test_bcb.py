@@ -136,3 +136,24 @@ def test_fetch_macro_bad_valor_in_ipca_payload(mocker):
     mocker.patch("data_sources.bcb.requests.get", side_effect=fake_get)
     with pytest.raises(BcbApiError):
         fetch_macro()
+
+
+def test_fetch_macro_partial_ipca_payload_is_total_failure(mocker):
+    """Truncated IPCA series (< 12 months) must raise BcbApiError."""
+    short_ipca = [{"data": f"01/{m:02d}/2025", "valor": "0.4"} for m in range(1, 9)]
+
+    def fake_get(url, timeout):
+        if "bcdata.sgs.432" in url:
+            return _mock_response([{"data": "01/04/2026", "valor": "14.75"}])
+        if "bcdata.sgs.433" in url:
+            return _mock_response(short_ipca)  # only 8 months
+        if "bcdata.sgs.12" in url:
+            return _mock_response([{"data": "01/04/2026", "valor": "14.65"}])
+        if "bcdata.sgs.1" in url:
+            return _mock_response([{"data": "01/04/2026", "valor": "5.30"}])
+        raise AssertionError(f"unexpected url: {url}")
+
+    mocker.patch("data_sources.bcb.requests.get", side_effect=fake_get)
+    with pytest.raises(BcbApiError) as exc:
+        fetch_macro()
+    assert "12 IPCA months" in str(exc.value)
