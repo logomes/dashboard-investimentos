@@ -13,10 +13,16 @@ Dashboard interativo para análise comparativa de investimento em imóvel reside
 ```
 dashboard/
 ├── app.py              # Entry point Streamlit
-├── config.py           # Parâmetros e constantes (dataclasses)
+├── config.py           # Parâmetros + dataclasses (RealEstate, Portfolio, Benchmark, Macro)
 ├── models.py           # Engine de simulação financeira
 ├── charts.py           # Geradores de gráficos Plotly
-└── requirements.txt
+├── data_sources/
+│   └── bcb.py          # Cliente HTTP da API SGS do Banco Central
+├── services/
+│   └── macro.py        # Cache + fallback dos indicadores macro
+├── tests/              # Suíte pytest (test_bcb, test_macro, test_models)
+├── requirements.txt
+└── requirements-dev.txt
 ```
 
 ## Setup
@@ -35,7 +41,7 @@ Acesse `http://localhost:8501` no navegador.
 
 - **Visão Geral**: KPIs, evolução do patrimônio, renda mensal, mapa risco × retorno
 - **Imóvel**: decomposição waterfall de receita/custos, breakdown de custos anuais, custos de aquisição
-- **Carteira**: alocação por classe (donut), yields comparados
+- **Carteira**: alocação por classe (donut), yields comparados, aporte mensal opcional indexado pelo IPCA
 - **Sensibilidade**: tornado chart com variação de 6 parâmetros-chave
 - **Tributação**: comparação direta de carga tributária efetiva
 - **Exportar**: download da simulação completa em CSV
@@ -56,6 +62,10 @@ Todos os parâmetros são editáveis via sidebar:
 - CDI: 14,65%
 - USD/BRL: 5,30
 - DY médio IFIX: 11,80%
+
+## Dados macro ao vivo
+
+Os indicadores Selic, IPCA, CDI e USD/BRL são buscados ao vivo da API SGS do Banco Central, com cache de 24h. Em caso de falha (timeout, indisponibilidade), o app usa valores de referência hardcoded e exibe banner de aviso. Os sliders de macro permanecem editáveis para simulação de cenários.
 
 ## Observação
 

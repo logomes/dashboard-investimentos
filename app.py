@@ -16,15 +16,13 @@ import streamlit as st
 
 from config import (
     BenchmarkParams,
+    MacroParams,
     PALETTE,
     PortfolioParams,
     RealEstateParams,
-    SELIC_RATE,
-    IPCA_EXPECTED,
-    CDI_RATE,
-    USD_BRL,
     TODAY_LABEL,
 )
+from services.macro import get_macro_params
 from models import (
     annual_tax_comparison,
     build_comparison_dataframe,
@@ -94,10 +92,10 @@ st.markdown("""
 
 # ---------- Sidebar: Parameters ----------
 
-def render_sidebar() -> tuple[RealEstateParams, PortfolioParams, BenchmarkParams, int, bool]:
+def render_sidebar(macro: MacroParams) -> tuple[RealEstateParams, PortfolioParams, BenchmarkParams, int, bool]:
     """Build sidebar inputs and return parameter objects."""
     st.sidebar.title("⚙️ Parâmetros")
-    st.sidebar.caption(f"Cenário macroeconômico: {TODAY_LABEL}")
+    st.sidebar.caption(f"Cenário macroeconômico: {TODAY_LABEL} — {macro.source_label}")
 
     capital = st.sidebar.number_input(
         "Capital inicial (R$)",
@@ -124,8 +122,26 @@ def render_sidebar() -> tuple[RealEstateParams, PortfolioParams, BenchmarkParams
         "IR sobre aluguel (%)", 0.0, 27.5, 7.5, 0.5) / 100
 
     st.sidebar.markdown("---")
+    st.sidebar.subheader("💰 Aporte mensal (Carteira)")
+    monthly_contribution = st.sidebar.number_input(
+        "Valor mensal (R$, em valor de hoje)",
+        min_value=0.0, max_value=100_000.0, value=0.0, step=100.0,
+        format="%.0f",
+        help="Valor adicionado mensalmente à carteira. Imóvel não recebe aportes.",
+    )
+    indexed = st.sidebar.checkbox(
+        "Indexar pelo IPCA",
+        value=True,
+        help="Quando ligado, o aporte cresce ano a ano pela inflação esperada (mantém poder de compra).",
+    )
+
+    st.sidebar.markdown("---")
     st.sidebar.subheader("📈 Carteira Diversificada")
-    pf_params = PortfolioParams(capital=capital)
+    pf_params = PortfolioParams(
+        capital=capital,
+        monthly_contribution=monthly_contribution,
+        contribution_inflation_indexed=indexed,
+    )
     with st.sidebar.expander("Ajustar pesos e yields", expanded=False):
         for asset in pf_params.assets:
             st.markdown(f"**{asset.name}**")
@@ -142,22 +158,44 @@ def render_sidebar() -> tuple[RealEstateParams, PortfolioParams, BenchmarkParams
     st.sidebar.subheader("📊 Benchmark RF")
     bench_params = BenchmarkParams(capital=capital)
     bench_params.selic_rate = st.sidebar.slider(
-        "Taxa Selic (%)", 5.0, 20.0, SELIC_RATE * 100, 0.25) / 100
+        "Taxa Selic (%)", 5.0, 20.0, macro.selic * 100, 0.25) / 100
+
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🔄 Recarregar dados macro", use_container_width=True):
+        get_macro_params.clear()
+        st.rerun()
 
     return re_params, pf_params, bench_params, horizon, reinvest
 
 
 # ---------- Page sections ----------
 
+def _run_simulations(
+    re_params: RealEstateParams,
+    pf_params: PortfolioParams,
+    bench_params: BenchmarkParams,
+    horizon: int,
+    reinvest: bool,
+    ipca: float,
+):
+    """Run all three simulations consistently for both overview and export."""
+    return (
+        simulate_real_estate(re_params, horizon, reinvest),
+        simulate_portfolio(pf_params, horizon, reinvest, ipca=ipca),
+        simulate_benchmark(bench_params, horizon),
+    )
+
+
 def render_overview(re_params: RealEstateParams,
                     pf_params: PortfolioParams,
                     bench_params: BenchmarkParams,
                     horizon: int,
-                    reinvest: bool) -> None:
+                    reinvest: bool,
+                    macro: MacroParams) -> None:
     """Top-level KPI dashboard and patrimony evolution."""
-    re_result = simulate_real_estate(re_params, horizon, reinvest)
-    pf_result = simulate_portfolio(pf_params, horizon, reinvest)
-    bench_result = simulate_benchmark(bench_params, horizon)
+    re_result, pf_result, bench_result = _run_simulations(
+        re_params, pf_params, bench_params, horizon, reinvest, macro.ipca,
+    )
 
     final_re = re_result.patrimony[-1]
     final_pf = pf_result.patrimony[-1]
@@ -291,7 +329,7 @@ def render_real_estate(re_params: RealEstateParams) -> None:
         """)
 
 
-def render_portfolio(pf_params: PortfolioParams) -> None:
+def render_portfolio(pf_params: PortfolioParams, macro: MacroParams) -> None:
     """Portfolio allocation analysis."""
     st.markdown("## 📈 Análise da Carteira Diversificada")
 
@@ -327,11 +365,11 @@ def render_portfolio(pf_params: PortfolioParams) -> None:
         "Imóvel líquido": 0.0415,
         "FIIs (IFIX)": 0.118,
         "Ações BR": 0.09,
-        "Tesouro Selic líq.": SELIC_RATE * (1 - 0.175),
+        "Tesouro Selic líq.": macro.selic * (1 - 0.175),
         "Carteira blended": pf_params.blended_yield(),
     }
     st.plotly_chart(
-        yield_comparison_bars(yields, {"Selic": SELIC_RATE, "IPCA": IPCA_EXPECTED}),
+        yield_comparison_bars(yields, {"Selic": macro.selic, "IPCA": macro.ipca}),
         use_container_width=True,
     )
 
@@ -408,13 +446,14 @@ def render_export(re_params: RealEstateParams,
                   pf_params: PortfolioParams,
                   bench_params: BenchmarkParams,
                   horizon: int,
-                  reinvest: bool) -> None:
+                  reinvest: bool,
+                  macro: MacroParams) -> None:
     """Export simulation results to CSV."""
     st.markdown("## 📥 Exportar Dados")
 
-    re_result = simulate_real_estate(re_params, horizon, reinvest)
-    pf_result = simulate_portfolio(pf_params, horizon, reinvest)
-    bench_result = simulate_benchmark(bench_params, horizon)
+    re_result, pf_result, bench_result = _run_simulations(
+        re_params, pf_params, bench_params, horizon, reinvest, macro.ipca,
+    )
 
     df = build_comparison_dataframe([re_result, pf_result, bench_result])
 
@@ -433,14 +472,22 @@ def render_export(re_params: RealEstateParams,
 # ---------- Main ----------
 
 def main() -> None:
+    macro = get_macro_params()
+
     st.title("📊 Imóvel vs. Carteira Diversificada")
     st.caption(
-        f"**Análise Buy & Hold** — Macro: Selic {SELIC_RATE:.2%} | "
-        f"IPCA esp. {IPCA_EXPECTED:.2%} | CDI {CDI_RATE:.2%} | "
-        f"USD/BRL {USD_BRL:.2f} ({TODAY_LABEL})"
+        f"**Análise Buy & Hold** — Macro: Selic {macro.selic:.2%} | "
+        f"IPCA esp. {macro.ipca:.2%} | CDI {macro.cdi:.2%} | "
+        f"USD/BRL {macro.usd_brl:.2f} ({macro.source_label})"
     )
 
-    re_params, pf_params, bench_params, horizon, reinvest = render_sidebar()
+    if macro.is_stale:
+        st.warning(
+            "⚠️ Indicadores macro indisponíveis ao vivo. Usando referências de "
+            f"{TODAY_LABEL}. Tente recarregar em alguns minutos."
+        )
+
+    re_params, pf_params, bench_params, horizon, reinvest = render_sidebar(macro)
 
     tabs = st.tabs([
         "📌 Visão Geral",
@@ -452,23 +499,23 @@ def main() -> None:
     ])
 
     with tabs[0]:
-        render_overview(re_params, pf_params, bench_params, horizon, reinvest)
+        render_overview(re_params, pf_params, bench_params, horizon, reinvest, macro)
     with tabs[1]:
         render_real_estate(re_params)
     with tabs[2]:
-        render_portfolio(pf_params)
+        render_portfolio(pf_params, macro)
     with tabs[3]:
         render_sensitivity(re_params, horizon)
     with tabs[4]:
         render_taxes(re_params, pf_params)
     with tabs[5]:
-        render_export(re_params, pf_params, bench_params, horizon, reinvest)
+        render_export(re_params, pf_params, bench_params, horizon, reinvest, macro)
 
     st.markdown("---")
     st.caption(
         "💡 Dashboard técnico para análise de cenário. "
         "Não constitui recomendação formal de investimento. "
-        "Premissas baseadas no cenário macro de Abr/2026."
+        f"Premissas baseadas em {macro.source_label}."
     )
 
 
