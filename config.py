@@ -131,6 +131,8 @@ class PortfolioParams:
         AssetClass("Tesouro IPCA+ / LCI",   0.15, 0.115, 0.00, 0.10,
                    "NTN-B 2035, LCI 100% CDI"),
     ])
+    monthly_contribution: float = 0.0           # R$/month, in today's value
+    contribution_inflation_indexed: bool = True
 
     def normalize_weights(self) -> None:
         """Force weights to sum to 1.0."""
