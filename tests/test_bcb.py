@@ -48,6 +48,11 @@ def test_fetch_macro_success(mocker):
     assert reading.ipca_12m == pytest.approx(0.04907, abs=1e-4)
     assert isinstance(reading.fetched_at, datetime)
 
+    # Timeout must always be forwarded
+    import data_sources.bcb as bcb_module
+    for call in bcb_module.requests.get.call_args_list:
+        assert call.kwargs.get("timeout") == 5.0
+
 
 def test_fetch_macro_timeout(mocker):
     mocker.patch("data_sources.bcb.requests.get",
@@ -101,5 +106,31 @@ def test_fetch_macro_partial_failure_is_total_failure(mocker):
 def test_fetch_macro_connection_error(mocker):
     mocker.patch("data_sources.bcb.requests.get",
                  side_effect=requests.ConnectionError("network"))
+    with pytest.raises(BcbApiError):
+        fetch_macro()
+
+
+def test_fetch_macro_other_request_exception(mocker):
+    """Subclasses of RequestException not specifically caught must still become BcbApiError."""
+    mocker.patch("data_sources.bcb.requests.get",
+                 side_effect=requests.TooManyRedirects("loop"))
+    with pytest.raises(BcbApiError):
+        fetch_macro()
+
+
+def test_fetch_macro_bad_valor_in_ipca_payload(mocker):
+    """Malformed valor field in IPCA monthly payload becomes BcbApiError, not ValueError."""
+    bad_ipca = [{"data": "01/01/2025", "valor": "N/A"}] * 12
+
+    def fake_get(url, timeout):
+        if "bcdata.sgs.432" in url:
+            return _mock_response([{"data": "01/04/2026", "valor": "14.75"}])
+        if "bcdata.sgs.433" in url:
+            return _mock_response(bad_ipca)
+        if "bcdata.sgs.12" in url:
+            return _mock_response([{"data": "01/04/2026", "valor": "14.65"}])
+        return _mock_response([{"data": "01/04/2026", "valor": "5.30"}])
+
+    mocker.patch("data_sources.bcb.requests.get", side_effect=fake_get)
     with pytest.raises(BcbApiError):
         fetch_macro()

@@ -24,7 +24,7 @@ class BcbApiError(Exception):
     """Raised on any failure while fetching from the BCB SGS API."""
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class BcbReading:
     selic: float          # decimal annual (0.1475 == 14.75% a.a.)
     ipca_12m: float       # decimal, accumulated 12 months
@@ -41,6 +41,8 @@ def _fetch_series(series_id: int, n: int, timeout: float) -> list[dict]:
         raise BcbApiError(f"timeout fetching series {series_id}") from e
     except requests.ConnectionError as e:
         raise BcbApiError(f"connection error: {e}") from e
+    except requests.RequestException as e:
+        raise BcbApiError(f"request error: {e}") from e
 
     try:
         resp.raise_for_status()
@@ -62,7 +64,7 @@ def _last_value(payload: list[dict]) -> float:
     try:
         return float(payload[-1]["valor"])
     except (KeyError, ValueError, TypeError) as e:
-        raise BcbApiError(f"invalid_payload: bad valor field") from e
+        raise BcbApiError("invalid_payload: bad valor field") from e
 
 
 def _accumulate_monthly(payload: list[dict]) -> float:
