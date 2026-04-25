@@ -19,7 +19,7 @@ USD_BRL: Final[float] = 5.30
 TODAY_LABEL: Final[str] = "Abril/2026"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class MacroParams:
     """Macro indicators consumed by the app. May come from BCB live or fallback."""
     selic: float

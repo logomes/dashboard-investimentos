@@ -56,3 +56,4 @@ def test_macro_fallback_constant_is_complete():
     assert MACRO_FALLBACK.cdi > 0
     assert MACRO_FALLBACK.usd_brl > 0
     assert MACRO_FALLBACK.is_stale is True
+    assert MACRO_FALLBACK.source_label  # non-empty string
