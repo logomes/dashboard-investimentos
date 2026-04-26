@@ -434,6 +434,7 @@ def annual_tax_comparison(
     portfolio: PortfolioParams,
 ) -> pd.DataFrame:
     """Compare annual tax burden between scenarios."""
+    re_label = "Imóvel" if real_estate.financing is None else "Imóvel (financiado)"
     re_tax = real_estate.income_tax_amount()
     re_gross_income = real_estate.gross_annual_rent()
 
@@ -449,7 +450,7 @@ def annual_tax_comparison(
 
     return pd.DataFrame([
         {
-            "Cenário": "Imóvel",
+            "Cenário": re_label,
             "Receita Bruta": re_gross_income,
             "Imposto Anual": re_tax,
             "Receita Líquida": re_gross_income - re_tax,
