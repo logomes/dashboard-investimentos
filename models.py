@@ -169,8 +169,86 @@ def _simulate_real_estate_financed(
     capital_initial: float,
     internal_portfolio_rate: float,
 ) -> SimulationResult:
-    """Financed purchase. Skeleton — full implementation in Task 4."""
-    raise NotImplementedError("Implemented in Task 4")
+    """Financed purchase: entry + monthly amortization, surplus invested at internal_portfolio_rate."""
+    fin = params.financing
+    assert fin is not None  # caller ensures this
+
+    entry = params.property_value * fin.entry_pct
+    if capital_initial < entry:
+        raise ValueError(
+            f"capital_initial ({capital_initial:.2f}) is below the required "
+            f"entry ({entry:.2f}) at entry_pct={fin.entry_pct:.0%}."
+        )
+
+    loan_principal = params.property_value - entry
+    initial_buffer = capital_initial - entry
+
+    # Build full schedule for term_years × 12 months
+    schedule = build_schedule(fin, loan_principal)
+
+    # Pad/truncate to horizon_years × 12 months
+    n_months_horizon = horizon_years * 12
+    n_months_term = fin.term_years * 12
+    if n_months_horizon > n_months_term:
+        pad = n_months_horizon - n_months_term
+        payments_full = np.concatenate([schedule.payments, np.zeros(pad)])
+        balance_full = np.concatenate([schedule.balance, np.zeros(pad)])
+    elif n_months_horizon < n_months_term:
+        payments_full = schedule.payments[:n_months_horizon]
+        balance_full = schedule.balance[:n_months_horizon]
+    else:
+        payments_full = schedule.payments
+        balance_full = schedule.balance
+
+    # Aggregate monthly → annual
+    payments_annual = payments_full.reshape(horizon_years, 12).sum(axis=1)
+
+    # Insurance: applied on balance at START of each month (before that month's amortization)
+    balance_at_month_start = np.concatenate([[loan_principal], balance_full[:-1]])
+    insurance_monthly = balance_at_month_start * fin.monthly_insurance_rate
+    insurance_annual = insurance_monthly.reshape(horizon_years, 12).sum(axis=1)
+
+    # Annual rent net (Phase 1 logic, grows with appreciation)
+    annual_net_income = np.array([
+        params.net_annual_income() * (1 + params.annual_appreciation) ** y
+        for y in range(horizon_years + 1)
+    ])
+    # net cash flow per year (year 0 has no payment activity; index 1.. of net_income aligns)
+    net_cash_flow = annual_net_income[1:] - payments_annual - insurance_annual
+
+    # Internal portfolio: starts at initial_buffer; PMT-end semantics (rate first, then cash flow)
+    rate = internal_portfolio_rate if reinvest_income else 0.0
+    internal_portfolio = np.zeros(horizon_years + 1)
+    internal_portfolio[0] = initial_buffer
+    for y in range(1, horizon_years + 1):
+        internal_portfolio[y] = internal_portfolio[y - 1] * (1 + rate) + net_cash_flow[y - 1]
+
+    # Property value evolution
+    years = np.arange(0, horizon_years + 1)
+    property_values = params.property_value * (1 + params.annual_appreciation) ** years
+
+    # Debt balance at end of each year
+    debt_balance = np.zeros(horizon_years + 1)
+    debt_balance[0] = loan_principal
+    for y in range(1, horizon_years + 1):
+        idx = 12 * y - 1
+        if idx < len(balance_full):
+            debt_balance[y] = balance_full[idx]
+        else:
+            debt_balance[y] = 0.0
+
+    patrimony = property_values - debt_balance + internal_portfolio
+    cumulative_income = np.cumsum(annual_net_income)
+
+    return SimulationResult(
+        years=years,
+        patrimony=patrimony,
+        annual_income=annual_net_income,
+        cumulative_income=cumulative_income,
+        label="Imóvel (financiado)",
+        color="#C0392B",
+        debt_balance=debt_balance,
+    )
 
 
 def simulate_portfolio(
