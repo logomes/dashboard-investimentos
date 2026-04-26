@@ -390,7 +390,7 @@ def simulate_portfolio_mc(
     sigmas = np.array([a.volatility for a in params.assets])
 
     # Per-trajectory per-year per-asset draws: shape (N, T, K)
-    draws = rng.normal(loc=means, scale=sigmas, size=(N, T, K))
+    draws = _draw_normal_returns(rng, mean=means, sigma=sigmas, shape=(N, T, K))
     # Portfolio return = weighted sum across assets: shape (N, T)
     portfolio_returns = (draws * weights).sum(axis=2)
 
@@ -411,7 +411,7 @@ def simulate_portfolio_mc(
     return MonteCarloResult(
         trajectories=trajectories,
         percentiles=_compute_percentiles(trajectories),
-        final_distribution=trajectories[:, -1],
+        final_distribution=trajectories[:, -1].copy(),
         max_drawdowns=_compute_max_drawdowns(trajectories),
         label="Carteira (MC)",
         color="#27AE60",
