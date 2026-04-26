@@ -45,7 +45,6 @@ from charts import (
     distribution_histogram_chart,
     income_vs_costs_waterfall,
     patrimony_band_chart,
-    patrimony_evolution_chart,
     portfolio_donut_chart,
     risk_return_scatter,
     sensitivity_tornado_chart,
@@ -53,6 +52,8 @@ from charts import (
     yield_comparison_bars,
 )
 
+
+LOSS_RATE_WARNING_THRESHOLD = 0.05  # Trigger banner when >X of trajectories end below capital
 
 # ---------- Page configuration ----------
 
@@ -579,7 +580,13 @@ def render_risk(
     horizon: int,
     capital_initial: float,
 ) -> None:
-    """Risco tab: probability of meeting target, drawdowns, percentiles, distributions."""
+    """Risco tab: probability of meeting target, drawdowns, percentiles, distributions.
+
+    `capital_initial` is currently used as the loss-rate baseline for BOTH
+    Carteira and Imóvel. This works while sidebar couples `property_value`
+    and `pf_params.capital` to the same input. When Phase 3 decouples them,
+    pass separate baselines (re/pf) explicitly.
+    """
     st.markdown("## 🎲 Análise de risco — Monte Carlo")
     st.caption(
         f"Baseado em {mc_params.n_trajectories:,} trajetórias com seed fixa. "
@@ -616,17 +623,17 @@ def render_risk(
     pf_loss_rate = float((pf_mc.final_distribution < capital_initial).mean())
     re_loss_rate = float((re_mc.final_distribution < capital_initial).mean())
     flagged = []
-    if pf_loss_rate > 0.05:
+    if pf_loss_rate > LOSS_RATE_WARNING_THRESHOLD:
         flagged.append(f"Carteira: {pf_loss_rate:.1%}")
-    if re_loss_rate > 0.05:
+    if re_loss_rate > LOSS_RATE_WARNING_THRESHOLD:
         flagged.append(f"Imóvel: {re_loss_rate:.1%}")
     if flagged:
+        scenarios_text = "; ".join(flagged)
+        capital_str = f"R$ {capital_initial:,.0f}".replace(",", ".")
         st.warning(
-            "⚠️ Trajetórias com perda nominal — "
-            + " | ".join(flagged)
-            + f" das trajetórias terminam abaixo de R$ {capital_initial:,.0f}".replace(",", ".")
-            + " ao final do horizonte. Considere reduzir alocação em ativos de alta σ "
-            + "ou ajustar o horizonte."
+            f"⚠️ Trajetórias com perda nominal abaixo de {capital_str} ao final do horizonte: "
+            f"{scenarios_text}. Considere reduzir alocação em ativos de alta σ "
+            f"ou ajustar o horizonte."
         )
 
     st.markdown("### Banda do patrimônio (p10–p90)")
