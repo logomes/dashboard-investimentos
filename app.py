@@ -18,6 +18,7 @@ from config import (
     BenchmarkParams,
     FinancingParams,
     MacroParams,
+    MonteCarloParams,
     PALETTE,
     PortfolioParams,
     RealEstateParams,
@@ -28,17 +29,22 @@ from models import (
     annual_tax_comparison,
     build_comparison_dataframe,
     build_schedule,
+    MonteCarloResult,
     sensitivity_real_estate,
-    SimulationResult,
     simulate_benchmark,
     simulate_portfolio,
+    simulate_portfolio_mc,
     simulate_real_estate,
+    simulate_real_estate_mc,
+    SimulationResult,
 )
 from charts import (
     annual_income_chart,
     cost_breakdown_chart,
     debt_evolution_chart,
+    distribution_histogram_chart,
     income_vs_costs_waterfall,
+    patrimony_band_chart,
     patrimony_evolution_chart,
     portfolio_donut_chart,
     risk_return_scatter,
@@ -96,7 +102,7 @@ st.markdown("""
 
 # ---------- Sidebar: Parameters ----------
 
-def render_sidebar(macro: MacroParams) -> tuple[RealEstateParams, PortfolioParams, BenchmarkParams, int, bool]:
+def render_sidebar(macro: MacroParams) -> tuple[RealEstateParams, PortfolioParams, BenchmarkParams, int, bool, MonteCarloParams]:
     """Build sidebar inputs and return parameter objects."""
     st.sidebar.title("⚙️ Parâmetros")
     st.sidebar.caption(f"Cenário macroeconômico: {TODAY_LABEL} — {macro.source_label}")
@@ -183,11 +189,31 @@ def render_sidebar(macro: MacroParams) -> tuple[RealEstateParams, PortfolioParam
         "Taxa Selic (%)", 5.0, 20.0, macro.selic * 100, 0.25) / 100
 
     st.sidebar.markdown("---")
+    st.sidebar.subheader("🎲 Análise estocástica")
+    target_patrimony = st.sidebar.number_input(
+        "Meta de patrimônio (R$)",
+        min_value=0.0, max_value=100_000_000.0, value=0.0, step=50_000.0,
+        format="%.0f",
+        help="Patrimônio-alvo no horizonte. Mostra prob. de bater. 0 desativa.",
+    )
+    with st.sidebar.expander("Volatilidades (σ anual)", expanded=False):
+        for asset in pf_params.assets:
+            asset.volatility = st.slider(
+                f"σ — {asset.name} (%)", 0.0, 50.0, asset.volatility * 100, 1.0,
+                key=f"vol_{asset.name}",
+            ) / 100
+        re_params.appreciation_volatility = st.slider(
+            "σ — Valorização imóvel (%)", 0.0, 30.0,
+            re_params.appreciation_volatility * 100, 1.0,
+        ) / 100
+    mc_params = MonteCarloParams(target_patrimony=target_patrimony)
+
+    st.sidebar.markdown("---")
     if st.sidebar.button("🔄 Recarregar dados macro", use_container_width=True):
         get_macro_params.clear()
         st.rerun()
 
-    return re_params, pf_params, bench_params, horizon, reinvest
+    return re_params, pf_params, bench_params, horizon, reinvest, mc_params
 
 
 # ---------- Page sections ----------
@@ -210,6 +236,23 @@ def _run_simulations(
         simulate_portfolio(pf_params, horizon, reinvest, ipca=ipca),
         simulate_benchmark(bench_params, horizon),
     )
+
+
+def _run_monte_carlo(
+    re_params: RealEstateParams,
+    pf_params: PortfolioParams,
+    horizon: int,
+    mc_params: MonteCarloParams,
+    ipca: float,
+) -> tuple[MonteCarloResult, MonteCarloResult]:
+    """Run Monte Carlo for both Carteira and Imóvel scenarios."""
+    pf_mc = simulate_portfolio_mc(pf_params, horizon, mc_params, ipca=ipca)
+    re_kwargs = {}
+    if re_params.financing is not None:
+        re_kwargs["capital_initial"] = re_params.property_value
+        re_kwargs["portfolio_for_internal"] = pf_params
+    re_mc = simulate_real_estate_mc(re_params, horizon, mc_params, **re_kwargs)
+    return re_mc, pf_mc
 
 
 def render_overview(re_params: RealEstateParams,
@@ -542,7 +585,7 @@ def main() -> None:
             f"{TODAY_LABEL}. Tente recarregar em alguns minutos."
         )
 
-    re_params, pf_params, bench_params, horizon, reinvest = render_sidebar(macro)
+    re_params, pf_params, bench_params, horizon, reinvest, mc_params = render_sidebar(macro)
 
     if re_params.financing is not None:
         entry_required = re_params.property_value * re_params.financing.entry_pct
@@ -572,6 +615,7 @@ def main() -> None:
     re_result, pf_result, bench_result = _run_simulations(
         re_params, pf_params, bench_params, horizon, reinvest, macro.ipca,
     )
+    re_mc, pf_mc = _run_monte_carlo(re_params, pf_params, horizon, mc_params, macro.ipca)
 
     with tabs[0]:
         render_overview(re_params, pf_params, bench_params, horizon, reinvest, macro,
