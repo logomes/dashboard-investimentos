@@ -35,6 +35,7 @@ from models import (
 from charts import (
     annual_income_chart,
     cost_breakdown_chart,
+    debt_evolution_chart,
     income_vs_costs_waterfall,
     patrimony_evolution_chart,
     portfolio_donut_chart,
@@ -214,12 +215,11 @@ def render_overview(re_params: RealEstateParams,
                     bench_params: BenchmarkParams,
                     horizon: int,
                     reinvest: bool,
-                    macro: MacroParams) -> None:
+                    macro: MacroParams,
+                    re_result,
+                    pf_result,
+                    bench_result) -> None:
     """Top-level KPI dashboard and patrimony evolution."""
-    re_result, pf_result, bench_result = _run_simulations(
-        re_params, pf_params, bench_params, horizon, reinvest, macro.ipca,
-    )
-
     final_re = re_result.patrimony[-1]
     final_pf = pf_result.patrimony[-1]
     final_bench = bench_result.patrimony[-1]
@@ -298,7 +298,7 @@ def render_overview(re_params: RealEstateParams,
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
-def render_real_estate(re_params: RealEstateParams) -> None:
+def render_real_estate(re_params: RealEstateParams, re_result) -> None:
     """Detailed real estate breakdown."""
     st.markdown("## 🏠 Análise do Imóvel")
 
@@ -312,6 +312,42 @@ def render_real_estate(re_params: RealEstateParams) -> None:
                    f"R$ {re_params.total_costs():,.0f}".replace(",", "."),
                    f"{re_params.total_costs() / re_params.gross_annual_rent():.1%} da receita",
                    delta_color="inverse")
+
+    if re_params.financing is not None and re_result.debt_balance is not None:
+        from models import build_schedule
+
+        fin = re_params.financing
+        entry = re_params.property_value * fin.entry_pct
+        loan = re_params.property_value - entry
+        schedule = build_schedule(fin, loan)
+        first_payment = float(schedule.payments[0])
+        total_interest = float(schedule.interest.sum())
+
+        st.markdown("### 💼 Financiamento")
+        cols = st.columns(4)
+        cols[0].metric("Entrada", f"R$ {entry:,.0f}".replace(",", "."))
+        cols[1].metric(
+            "Parcela inicial", f"R$ {first_payment:,.0f}".replace(",", "."),
+            help=f"Primeira parcela ({fin.system}). Em SAC, parcelas decrescem; em Price, ficam constantes.",
+        )
+        cols[2].metric("Total de juros", f"R$ {total_interest:,.0f}".replace(",", "."))
+        cols[3].metric("Prazo", f"{fin.term_years} anos")
+
+        # Internal portfolio = patrimony - property_value_t + debt_balance
+        property_values = re_params.property_value * (1 + re_params.annual_appreciation) ** re_result.years
+        internal_portfolio = re_result.patrimony - property_values + re_result.debt_balance
+        if internal_portfolio.min() < 0:
+            negative_year = int(re_result.years[internal_portfolio < 0][0])
+            st.warning(
+                f"⚠️ Cenário com fluxo negativo: a carteira interna do Imóvel fica deficitária "
+                f"a partir do ano {negative_year}. Em vida real, isso exigiria injeção de capital "
+                f"externo. Considere aumentar a entrada, o prazo, ou o aluguel-alvo."
+            )
+
+        st.plotly_chart(
+            debt_evolution_chart(re_result.years, re_result.debt_balance),
+            use_container_width=True,
+        )
 
     st.markdown("### Decomposição de receita e custos")
     st.plotly_chart(income_vs_costs_waterfall(re_params), use_container_width=True)
@@ -470,13 +506,12 @@ def render_export(re_params: RealEstateParams,
                   bench_params: BenchmarkParams,
                   horizon: int,
                   reinvest: bool,
-                  macro: MacroParams) -> None:
+                  macro: MacroParams,
+                  re_result,
+                  pf_result,
+                  bench_result) -> None:
     """Export simulation results to CSV."""
     st.markdown("## 📥 Exportar Dados")
-
-    re_result, pf_result, bench_result = _run_simulations(
-        re_params, pf_params, bench_params, horizon, reinvest, macro.ipca,
-    )
 
     df = build_comparison_dataframe([re_result, pf_result, bench_result])
 
@@ -537,10 +572,15 @@ def main() -> None:
         "📥 Exportar",
     ])
 
+    re_result, pf_result, bench_result = _run_simulations(
+        re_params, pf_params, bench_params, horizon, reinvest, macro.ipca,
+    )
+
     with tabs[0]:
-        render_overview(re_params, pf_params, bench_params, horizon, reinvest, macro)
+        render_overview(re_params, pf_params, bench_params, horizon, reinvest, macro,
+                        re_result, pf_result, bench_result)
     with tabs[1]:
-        render_real_estate(re_params)
+        render_real_estate(re_params, re_result)
     with tabs[2]:
         render_portfolio(pf_params, macro)
     with tabs[3]:
@@ -548,7 +588,8 @@ def main() -> None:
     with tabs[4]:
         render_taxes(re_params, pf_params)
     with tabs[5]:
-        render_export(re_params, pf_params, bench_params, horizon, reinvest, macro)
+        render_export(re_params, pf_params, bench_params, horizon, reinvest, macro,
+                      re_result, pf_result, bench_result)
 
     st.markdown("---")
     st.caption(

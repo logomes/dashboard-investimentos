@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -351,4 +352,30 @@ def tax_comparison_chart(df: pd.DataFrame) -> go.Figure:
     )
     fig.update_yaxes(tickformat=",.0f", tickprefix="R$ ", row=1, col=1)
     fig.update_yaxes(ticksuffix="%", row=1, col=2)
+    return fig
+
+
+def debt_evolution_chart(
+    years: np.ndarray,
+    debt_balance: np.ndarray,
+) -> go.Figure:
+    """Area chart of outstanding loan balance over time."""
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=years,
+        y=debt_balance,
+        mode="lines",
+        fill="tozeroy",
+        line=dict(color=PALETTE["imovel"], width=2),
+        name="Saldo devedor",
+    ))
+    fig.update_layout(
+        title="Saldo devedor ao longo do tempo",
+        xaxis_title="Ano",
+        yaxis_title="Saldo (R$)",
+        yaxis=dict(tickformat=",.0f", separatethousands=True),
+        plot_bgcolor=PALETTE["background"],
+        margin=dict(l=20, r=20, t=50, b=40),
+        height=320,
+    )
     return fig
