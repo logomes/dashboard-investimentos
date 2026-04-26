@@ -16,6 +16,7 @@ import streamlit as st
 
 from config import (
     BenchmarkParams,
+    FinancingParams,
     MacroParams,
     PALETTE,
     PortfolioParams,
@@ -26,7 +27,9 @@ from services.macro import get_macro_params
 from models import (
     annual_tax_comparison,
     build_comparison_dataframe,
+    build_schedule,
     sensitivity_real_estate,
+    SimulationResult,
     simulate_benchmark,
     simulate_portfolio,
     simulate_real_estate,
@@ -34,6 +37,7 @@ from models import (
 from charts import (
     annual_income_chart,
     cost_breakdown_chart,
+    debt_evolution_chart,
     income_vs_costs_waterfall,
     patrimony_evolution_chart,
     portfolio_donut_chart,
@@ -121,6 +125,24 @@ def render_sidebar(macro: MacroParams) -> tuple[RealEstateParams, PortfolioParam
     re_params.income_tax_bracket = st.sidebar.slider(
         "IR sobre aluguel (%)", 0.0, 27.5, 7.5, 0.5) / 100
 
+    financing_enabled = st.sidebar.checkbox(
+        "Financiar imóvel",
+        value=False,
+        help="Quando ligado, simula entrada + parcelas. Capital inicial cobre a entrada; sobra entra na carteira interna.",
+    )
+    if financing_enabled:
+        with st.sidebar.expander("Detalhes do financiamento", expanded=True):
+            entry_pct = st.slider("Entrada (% do imóvel)", 10, 80, 20, 5) / 100
+            term_years = st.slider("Prazo (anos)", 5, 35, 30, 1)
+            annual_rate = st.slider("Taxa anual (%)", 6.0, 18.0, 11.5, 0.25) / 100
+            system = st.radio("Sistema", ["SAC", "Price"], horizontal=True)
+        re_params.financing = FinancingParams(
+            term_years=term_years,
+            annual_rate=annual_rate,
+            entry_pct=entry_pct,
+            system=system,
+        )
+
     st.sidebar.markdown("---")
     st.sidebar.subheader("💰 Aporte mensal (Carteira)")
     monthly_contribution = st.sidebar.number_input(
@@ -179,8 +201,12 @@ def _run_simulations(
     ipca: float,
 ):
     """Run all three simulations consistently for both overview and export."""
+    re_kwargs = {}
+    if re_params.financing is not None:
+        re_kwargs["capital_initial"] = re_params.property_value
+        re_kwargs["internal_portfolio_rate"] = pf_params.total_return()
     return (
-        simulate_real_estate(re_params, horizon, reinvest),
+        simulate_real_estate(re_params, horizon, reinvest, **re_kwargs),
         simulate_portfolio(pf_params, horizon, reinvest, ipca=ipca),
         simulate_benchmark(bench_params, horizon),
     )
@@ -191,12 +217,11 @@ def render_overview(re_params: RealEstateParams,
                     bench_params: BenchmarkParams,
                     horizon: int,
                     reinvest: bool,
-                    macro: MacroParams) -> None:
+                    macro: MacroParams,
+                    re_result: SimulationResult,
+                    pf_result: SimulationResult,
+                    bench_result: SimulationResult) -> None:
     """Top-level KPI dashboard and patrimony evolution."""
-    re_result, pf_result, bench_result = _run_simulations(
-        re_params, pf_params, bench_params, horizon, reinvest, macro.ipca,
-    )
-
     final_re = re_result.patrimony[-1]
     final_pf = pf_result.patrimony[-1]
     final_bench = bench_result.patrimony[-1]
@@ -251,7 +276,7 @@ def render_overview(re_params: RealEstateParams,
     st.markdown("### Tabela consolidada")
     df = pd.DataFrame([
         {
-            "Cenário": "Imóvel",
+            "Cenário": re_result.label,
             "Yield líquido": f"{re_params.net_yield():.2%}",
             "Retorno total a.a.": f"{re_params.total_return():.2%}",
             f"Patrimônio Ano {horizon}": f"R$ {final_re:,.0f}".replace(",", "."),
@@ -275,7 +300,7 @@ def render_overview(re_params: RealEstateParams,
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
-def render_real_estate(re_params: RealEstateParams) -> None:
+def render_real_estate(re_params: RealEstateParams, re_result: SimulationResult) -> None:
     """Detailed real estate breakdown."""
     st.markdown("## 🏠 Análise do Imóvel")
 
@@ -289,6 +314,37 @@ def render_real_estate(re_params: RealEstateParams) -> None:
                    f"R$ {re_params.total_costs():,.0f}".replace(",", "."),
                    f"{re_params.total_costs() / re_params.gross_annual_rent():.1%} da receita",
                    delta_color="inverse")
+
+    if re_params.financing is not None and re_result.debt_balance is not None:
+        fin = re_params.financing
+        entry = re_params.property_value * fin.entry_pct
+        loan = re_params.property_value - entry
+        schedule = build_schedule(fin, loan)
+        first_payment = float(schedule.payments[0])
+        total_interest = float(schedule.interest.sum())
+
+        st.markdown("### 💼 Financiamento")
+        cols = st.columns(4)
+        cols[0].metric("Entrada", f"R$ {entry:,.0f}".replace(",", "."))
+        cols[1].metric(
+            "Parcela inicial", f"R$ {first_payment:,.0f}".replace(",", "."),
+            help=f"Primeira parcela ({fin.system}). Em SAC, parcelas decrescem; em Price, ficam constantes.",
+        )
+        cols[2].metric("Total de juros", f"R$ {total_interest:,.0f}".replace(",", "."))
+        cols[3].metric("Prazo", f"{fin.term_years} anos")
+
+        if re_result.internal_portfolio is not None and re_result.internal_portfolio.min() < 0:
+            negative_year = int(re_result.years[re_result.internal_portfolio < 0][0])
+            st.warning(
+                f"⚠️ Cenário com fluxo negativo: a carteira interna do Imóvel fica deficitária "
+                f"a partir do ano {negative_year}. Em vida real, isso exigiria injeção de capital "
+                f"externo. Considere aumentar a entrada, o prazo, ou o aluguel-alvo."
+            )
+
+        st.plotly_chart(
+            debt_evolution_chart(re_result.years, re_result.debt_balance),
+            use_container_width=True,
+        )
 
     st.markdown("### Decomposição de receita e custos")
     st.plotly_chart(income_vs_costs_waterfall(re_params), use_container_width=True)
@@ -447,13 +503,12 @@ def render_export(re_params: RealEstateParams,
                   bench_params: BenchmarkParams,
                   horizon: int,
                   reinvest: bool,
-                  macro: MacroParams) -> None:
+                  macro: MacroParams,
+                  re_result: SimulationResult,
+                  pf_result: SimulationResult,
+                  bench_result: SimulationResult) -> None:
     """Export simulation results to CSV."""
     st.markdown("## 📥 Exportar Dados")
-
-    re_result, pf_result, bench_result = _run_simulations(
-        re_params, pf_params, bench_params, horizon, reinvest, macro.ipca,
-    )
 
     df = build_comparison_dataframe([re_result, pf_result, bench_result])
 
@@ -489,6 +544,22 @@ def main() -> None:
 
     re_params, pf_params, bench_params, horizon, reinvest = render_sidebar(macro)
 
+    if re_params.financing is not None:
+        entry_required = re_params.property_value * re_params.financing.entry_pct
+        # NOTE: capital_initial currently equals property_value because the sidebar
+        # uses a single "Capital inicial" input for both. With entry_pct bounded
+        # to [0.10, 0.80] by the slider, the guard below is structurally unreachable
+        # today. It will become meaningful when capital and property value are
+        # decoupled (deferred to Phase 3+).
+        capital_initial = re_params.property_value
+        if capital_initial < entry_required:
+            st.error(
+                f"Capital insuficiente: a entrada exige R$ {entry_required:,.0f}".replace(",", ".")
+                + f", mas o capital inicial é R$ {capital_initial:,.0f}.".replace(",", ".")
+                + " Aumente o capital ou reduza a % de entrada."
+            )
+            st.stop()
+
     tabs = st.tabs([
         "📌 Visão Geral",
         "🏠 Imóvel",
@@ -498,10 +569,15 @@ def main() -> None:
         "📥 Exportar",
     ])
 
+    re_result, pf_result, bench_result = _run_simulations(
+        re_params, pf_params, bench_params, horizon, reinvest, macro.ipca,
+    )
+
     with tabs[0]:
-        render_overview(re_params, pf_params, bench_params, horizon, reinvest, macro)
+        render_overview(re_params, pf_params, bench_params, horizon, reinvest, macro,
+                        re_result, pf_result, bench_result)
     with tabs[1]:
-        render_real_estate(re_params)
+        render_real_estate(re_params, re_result)
     with tabs[2]:
         render_portfolio(pf_params, macro)
     with tabs[3]:
@@ -509,7 +585,8 @@ def main() -> None:
     with tabs[4]:
         render_taxes(re_params, pf_params)
     with tabs[5]:
-        render_export(re_params, pf_params, bench_params, horizon, reinvest, macro)
+        render_export(re_params, pf_params, bench_params, horizon, reinvest, macro,
+                      re_result, pf_result, bench_result)
 
     st.markdown("---")
     st.caption(

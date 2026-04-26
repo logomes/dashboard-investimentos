@@ -125,3 +125,140 @@ def test_simulate_benchmark_unchanged():
     result = simulate_benchmark(bench, horizon_years=5)
     expected = 100_000 * (1 + bench.net_yield()) ** 5
     assert result.patrimony[-1] == pytest.approx(expected, rel=1e-6)
+
+
+# ---------- Financed real-estate scenarios ----------
+
+def _make_financed_params(
+    property_value: float = 200_000.0,
+    monthly_rent: float = 1_500.0,
+    appreciation: float = 0.0,
+    iptu_rate: float = 0.0,
+    vacancy_months: float = 0.0,
+    mgmt_fee: float = 0.0,
+    income_tax: float = 0.0,
+    maintenance: float = 0.0,
+    insurance_annual: float = 0.0,
+    term_years: int = 30,
+    annual_rate: float = 0.10,
+    entry_pct: float = 0.20,
+    system: str = "SAC",
+    monthly_insurance_rate: float = 0.0,
+):
+    """Helper: build a RealEstateParams with financing attached, costs zeroed by default."""
+    from config import FinancingParams
+    fin = FinancingParams(
+        term_years=term_years,
+        annual_rate=annual_rate,
+        entry_pct=entry_pct,
+        system=system,  # type: ignore[arg-type]
+        monthly_insurance_rate=monthly_insurance_rate,
+    )
+    return RealEstateParams(
+        property_value=property_value,
+        monthly_rent=monthly_rent,
+        annual_appreciation=appreciation,
+        iptu_rate=iptu_rate,
+        vacancy_months_per_year=vacancy_months,
+        management_fee_pct=mgmt_fee,
+        maintenance_annual=maintenance,
+        insurance_annual=insurance_annual,
+        income_tax_bracket=income_tax,
+        financing=fin,
+    )
+
+
+def test_real_estate_no_financing_unchanged():
+    """Regression: financing=None → identical patrimony to Phase 1 behavior."""
+    re_params = RealEstateParams()
+    result = simulate_real_estate(re_params, horizon_years=10)
+    expected_property_y10 = re_params.property_value * (1 + re_params.annual_appreciation) ** 10
+    assert result.debt_balance is None
+    assert result.patrimony[-1] >= expected_property_y10
+
+
+def test_real_estate_with_financing_returns_debt_balance():
+    re_params = _make_financed_params()
+    result = simulate_real_estate(
+        re_params, horizon_years=10, capital_initial=200_000.0,
+        internal_portfolio_rate=0.0,
+    )
+    assert result.debt_balance is not None
+    assert len(result.debt_balance) == 11
+
+
+def test_financed_horizon_equals_term_pays_off():
+    re_params = _make_financed_params(term_years=10)
+    result = simulate_real_estate(
+        re_params, horizon_years=10, capital_initial=200_000.0,
+        internal_portfolio_rate=0.0,
+    )
+    assert result.debt_balance[-1] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_financed_horizon_less_than_term_leaves_debt():
+    re_params = _make_financed_params(term_years=30)
+    result = simulate_real_estate(
+        re_params, horizon_years=10, capital_initial=200_000.0,
+        internal_portfolio_rate=0.0,
+    )
+    assert result.debt_balance[-1] > 0
+
+
+def test_financed_horizon_greater_than_term_zero_after_term():
+    re_params = _make_financed_params(term_years=10)
+    result = simulate_real_estate(
+        re_params, horizon_years=15, capital_initial=200_000.0,
+        internal_portfolio_rate=0.0,
+    )
+    np.testing.assert_allclose(result.debt_balance[10:], 0.0, atol=1e-6)
+
+
+def test_financed_internal_portfolio_can_go_negative():
+    """Low rent + high payment → internal portfolio goes negative, no error raised."""
+    re_params = _make_financed_params(
+        property_value=500_000.0,
+        monthly_rent=500.0,
+        term_years=10, annual_rate=0.15, entry_pct=0.20,
+    )
+    result = simulate_real_estate(
+        re_params, horizon_years=10, capital_initial=100_000.0,
+        internal_portfolio_rate=0.0,
+    )
+    property_values = re_params.property_value * (1 + re_params.annual_appreciation) ** np.arange(11)
+    internal = result.patrimony - property_values + result.debt_balance
+    assert internal.min() < 0
+
+
+def test_capital_initial_split_correctly():
+    """capital=300k, entry_pct=20%, property=200k → buffer = 300k - 40k = 260k.
+
+    With zero rent and zero portfolio rate over 1 year, year 0 patrimony equals
+    property_value - loan_principal + buffer = 200k - 160k + 260k = 300k.
+    """
+    re_params = _make_financed_params(
+        property_value=200_000.0, monthly_rent=0.0, entry_pct=0.20,
+        term_years=10, annual_rate=0.10,
+    )
+    result = simulate_real_estate(
+        re_params, horizon_years=1, capital_initial=300_000.0,
+        internal_portfolio_rate=0.0,
+    )
+    assert result.patrimony[0] == pytest.approx(300_000.0, abs=1e-6)
+
+
+def test_sac_vs_price_final_patrimony():
+    """Same inputs except system → both viable, Price has more interest paid (smaller portfolio)."""
+    re_sac = _make_financed_params(term_years=10, system="SAC")
+    re_price = _make_financed_params(term_years=10, system="Price")
+    r_sac = simulate_real_estate(
+        re_sac, horizon_years=10, capital_initial=200_000.0,
+        internal_portfolio_rate=0.0,
+    )
+    r_price = simulate_real_estate(
+        re_price, horizon_years=10, capital_initial=200_000.0,
+        internal_portfolio_rate=0.0,
+    )
+    assert r_sac.debt_balance[-1] == pytest.approx(0.0, abs=1e-6)
+    assert r_price.debt_balance[-1] == pytest.approx(0.0, abs=1e-6)
+    assert r_sac.patrimony[-1] > r_price.patrimony[-1]
