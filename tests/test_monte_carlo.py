@@ -159,3 +159,59 @@ def test_real_estate_mc_cash_shape():
     assert result.trajectories.shape == (200, 16)
     assert result.final_distribution.shape == (200,)
     assert result.label == "Imóvel (MC)"
+
+
+# ---------- simulate_real_estate_mc (financed) ----------
+
+def test_real_estate_mc_financed_requires_portfolio_for_internal():
+    from config import FinancingParams, MonteCarloParams, RealEstateParams
+    from models import simulate_real_estate_mc
+
+    fin = FinancingParams(term_years=10, annual_rate=0.10, entry_pct=0.20, system="SAC")
+    re_params = RealEstateParams()
+    re_params.financing = fin
+    mc_params = MonteCarloParams(n_trajectories=10, seed=42)
+
+    with pytest.raises(ValueError) as exc:
+        simulate_real_estate_mc(
+            re_params, horizon_years=10, mc_params=mc_params,
+            capital_initial=200_000.0, portfolio_for_internal=None,
+        )
+    assert "portfolio_for_internal" in str(exc.value)
+
+
+def test_real_estate_mc_financed_zero_vol_matches_deterministic():
+    """All volatilities = 0 → financed MC matches deterministic financed simulation."""
+    from config import AssetClass, FinancingParams, MonteCarloParams, PortfolioParams, RealEstateParams
+    from models import simulate_real_estate, simulate_real_estate_mc
+
+    fin = FinancingParams(term_years=10, annual_rate=0.10, entry_pct=0.20, system="SAC")
+    re_params = RealEstateParams(
+        property_value=200_000.0, monthly_rent=1_500.0,
+        annual_appreciation=0.05, appreciation_volatility=0.0,
+        iptu_rate=0.0, vacancy_months_per_year=0.0,
+        management_fee_pct=0.0, maintenance_annual=0.0,
+        insurance_annual=0.0, income_tax_bracket=0.0,
+    )
+    re_params.financing = fin
+
+    pf = PortfolioParams(capital=0.0)
+    pf.assets = [
+        AssetClass("Test", weight=1.0, expected_yield=0.10,
+                   capital_gain=0.0, tax_rate=0.0, volatility=0.0),
+    ]
+
+    mc_params = MonteCarloParams(n_trajectories=20, seed=42)
+
+    det = simulate_real_estate(
+        re_params, horizon_years=10, capital_initial=200_000.0,
+        internal_portfolio_rate=pf.total_return(),
+    )
+    mc = simulate_real_estate_mc(
+        re_params, horizon_years=10, mc_params=mc_params,
+        capital_initial=200_000.0, portfolio_for_internal=pf,
+    )
+
+    # All MC trajectories should match the deterministic patrimony
+    for traj in mc.trajectories:
+        np.testing.assert_allclose(traj, det.patrimony, rtol=1e-6, atol=1e-3)
