@@ -514,6 +514,11 @@ def main() -> None:
 
     if re_params.financing is not None:
         entry_required = re_params.property_value * re_params.financing.entry_pct
+        # NOTE: capital_initial currently equals property_value because the sidebar
+        # uses a single "Capital inicial" input for both. With entry_pct bounded
+        # to [0.10, 0.80] by the slider, the guard below is structurally unreachable
+        # today. It will become meaningful when capital and property value are
+        # decoupled (deferred to Phase 3+).
         capital_initial = re_params.property_value
         if capital_initial < entry_required:
             st.error(
