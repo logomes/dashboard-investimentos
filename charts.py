@@ -380,3 +380,99 @@ def debt_evolution_chart(
     fig.update_yaxes(tickformat=",.0f", tickprefix="R$ ")
     fig.update_xaxes(dtick=1)
     return fig
+
+
+def patrimony_band_chart(
+    mc_results: list,
+    deterministic_results: list | None = None,
+) -> go.Figure:
+    """Banda p10–p90 sombreada + linha p50 por cenário.
+
+    When `deterministic_results` is provided, draws solid dashed lines on top
+    using the same color per scenario (paired by list order).
+    """
+    fig = go.Figure()
+
+    for mc in mc_results:
+        years = np.arange(len(mc.percentiles["p10"]))
+        # Upper band edge (p90) — invisible marker (used as anchor for fill)
+        fig.add_trace(go.Scatter(
+            x=years, y=mc.percentiles["p90"],
+            mode="lines",
+            line=dict(width=0),
+            showlegend=False,
+            hoverinfo="skip",
+            name=f"{mc.label} p90",
+        ))
+        # Lower band edge (p10) with fill back up to p90
+        fig.add_trace(go.Scatter(
+            x=years, y=mc.percentiles["p10"],
+            mode="lines",
+            line=dict(width=0),
+            fill="tonexty",
+            fillcolor=_band_fill(mc.color),
+            showlegend=False,
+            hoverinfo="skip",
+            name=f"{mc.label} p10",
+        ))
+        # Median line
+        fig.add_trace(go.Scatter(
+            x=years, y=mc.percentiles["p50"],
+            mode="lines",
+            line=dict(color=mc.color, width=2),
+            name=f"{mc.label} p50",
+        ))
+
+    if deterministic_results is not None:
+        for det in deterministic_results:
+            fig.add_trace(go.Scatter(
+                x=det.years, y=det.patrimony,
+                mode="lines",
+                line=dict(color=det.color, width=2, dash="dash"),
+                name=f"{det.label} (det)",
+            ))
+
+    fig.update_layout(
+        **_LAYOUT_DEFAULTS,
+        title="Evolução do patrimônio — banda p10–p90 (Monte Carlo)",
+        xaxis_title="Ano",
+        yaxis_title="Patrimônio (R$)",
+        height=420,
+    )
+    fig.update_yaxes(tickformat=",.0f", tickprefix="R$ ")
+    fig.update_xaxes(dtick=1)
+    return fig
+
+
+def _band_fill(hex_color: str) -> str:
+    """Convert #RRGGBB to rgba(R,G,B,0.18) for soft band fill."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},0.18)"
+
+
+def distribution_histogram_chart(mc_result, target: float = 0.0) -> go.Figure:
+    """Histogram of the final-year patrimony distribution. Target line shown if > 0."""
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(
+        x=mc_result.final_distribution,
+        nbinsx=40,
+        marker=dict(color=mc_result.color, opacity=0.7),
+        name=mc_result.label,
+    ))
+    if target > 0:
+        fig.add_vline(
+            x=target, line=dict(color="#2C3E50", width=2, dash="dash"),
+            annotation_text=f"Meta: R$ {target:,.0f}".replace(",", "."),
+            annotation_position="top right",
+        )
+    fig.update_layout(
+        **_LAYOUT_DEFAULTS,
+        title=f"Distribuição final — {mc_result.label}",
+        xaxis_title="Patrimônio final (R$)",
+        yaxis_title="Frequência",
+        height=320,
+        showlegend=False,
+    )
+    fig.update_xaxes(tickformat=",.0f", tickprefix="R$ ")
+    return fig
