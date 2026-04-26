@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from models import AmortizationSchedule, _price_schedule, _sac_schedule, build_schedule
+from models import _price_schedule, _sac_schedule, build_schedule
 
 
 # ---------- SAC ----------

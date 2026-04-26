@@ -48,8 +48,7 @@ def _sac_schedule(principal: float, monthly_rate: float, n_months: int) -> Amort
     interest = balance_start * monthly_rate
     payments = principal_arr + interest
     balance_end = balance_start - principal_arr
-    # Numerical drift cleanup: enforce final balance = 0
-    balance_end[-1] = 0.0
+    # SAC final balance is algebraically zero; no drift cleanup needed.
     return AmortizationSchedule(
         payments=payments,
         interest=interest,
