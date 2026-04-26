@@ -33,6 +33,52 @@ class SimulationResult:
 
 
 @dataclass(slots=True, frozen=True)
+class MonteCarloResult:
+    """Outcome of a Monte Carlo simulation: trajectories + summary stats."""
+    trajectories: np.ndarray         # shape (N, horizon+1) — patrimônio ano a ano
+    percentiles: dict                # {"p10","p50","p90"} — cada um shape (horizon+1,)
+    final_distribution: np.ndarray   # shape (N,) — patrimônio no ano final
+    max_drawdowns: np.ndarray        # shape (N,) — peak-to-trough drop por trajetória
+    label: str
+    color: str
+
+    def prob_target(self, target: float) -> float:
+        """Fração de trajetórias onde patrimônio final >= target."""
+        return float((self.final_distribution >= target).mean())
+
+
+def _draw_normal_returns(
+    rng: np.random.Generator,
+    mean: float,
+    sigma: float,
+    shape: tuple,
+) -> np.ndarray:
+    """Generate normal random returns with given shape, mean, and sigma."""
+    return rng.normal(loc=mean, scale=sigma, size=shape)
+
+
+def _compute_percentiles(trajectories: np.ndarray) -> dict:
+    """Compute p10/p50/p90 across trajectories (axis=0) for each year."""
+    return {
+        "p10": np.percentile(trajectories, 10, axis=0),
+        "p50": np.percentile(trajectories, 50, axis=0),
+        "p90": np.percentile(trajectories, 90, axis=0),
+    }
+
+
+def _compute_max_drawdowns(trajectories: np.ndarray) -> np.ndarray:
+    """Peak-to-trough relative drop per trajectory.
+
+    Returns positive fractions in [0, 1]. A trajectory that only grows has drawdown 0.
+    """
+    running_max = np.maximum.accumulate(trajectories, axis=1)
+    # Avoid divide-by-zero: where running_max == 0, drawdown is 0
+    safe_max = np.where(running_max == 0, 1.0, running_max)
+    drawdowns = (running_max - trajectories) / safe_max
+    return drawdowns.max(axis=1)
+
+
+@dataclass(slots=True, frozen=True)
 class AmortizationSchedule:
     """Monthly amortization schedule for a fixed-rate loan."""
     payments: np.ndarray   # total payment (interest + principal) per month
