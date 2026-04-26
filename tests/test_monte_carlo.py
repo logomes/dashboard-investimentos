@@ -127,3 +127,35 @@ def test_portfolio_mc_indexed_contribution_grows_mean():
     # With volatility=0, all trajectories identical; mean = single trajectory
     mean_traj = result.trajectories.mean(axis=0)
     assert np.all(np.diff(mean_traj) > 0)  # strictly increasing
+
+
+# ---------- simulate_real_estate_mc (cash) ----------
+
+def test_real_estate_mc_cash_zero_vol_matches_deterministic():
+    """appreciation_volatility=0 → MC trajectories all match deterministic patrimony."""
+    from config import MonteCarloParams, RealEstateParams
+    from models import simulate_real_estate, simulate_real_estate_mc
+
+    re_params = RealEstateParams()
+    re_params.appreciation_volatility = 0.0
+    mc_params = MonteCarloParams(n_trajectories=50, seed=42)
+
+    det = simulate_real_estate(re_params, horizon_years=10)
+    mc = simulate_real_estate_mc(re_params, horizon_years=10, mc_params=mc_params)
+
+    # All MC trajectories should match the deterministic patrimony
+    for traj in mc.trajectories:
+        np.testing.assert_allclose(traj, det.patrimony, rtol=1e-6)
+
+
+def test_real_estate_mc_cash_shape():
+    from config import MonteCarloParams, RealEstateParams
+    from models import simulate_real_estate_mc
+
+    re_params = RealEstateParams()
+    mc_params = MonteCarloParams(n_trajectories=200, seed=42)
+    result = simulate_real_estate_mc(re_params, horizon_years=15, mc_params=mc_params)
+
+    assert result.trajectories.shape == (200, 16)
+    assert result.final_distribution.shape == (200,)
+    assert result.label == "Imóvel (MC)"

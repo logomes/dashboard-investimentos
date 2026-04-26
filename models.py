@@ -304,6 +304,96 @@ def _simulate_real_estate_financed(
     )
 
 
+def simulate_real_estate_mc(
+    params: RealEstateParams,
+    horizon_years: int,
+    mc_params: MonteCarloParams,
+    capital_initial: float | None = None,
+    portfolio_for_internal: PortfolioParams | None = None,
+) -> MonteCarloResult:
+    """Monte Carlo simulation of the real estate scenario.
+
+    Appreciation is stochastic per trajectory per year. For the cash variant,
+    rent grows with each trajectory's own appreciation and is reinvested at
+    a stochastic rate. For the financed variant, the schedule is deterministic
+    (contract rate is fixed) but the internal portfolio uses a Carteira-blended
+    stochastic return drawn from `portfolio_for_internal`.
+    """
+    if horizon_years <= 0:
+        raise ValueError("horizon_years must be positive")
+
+    rng = np.random.default_rng(mc_params.seed + 1)  # offset: independent stream from Carteira
+    N, T = mc_params.n_trajectories, horizon_years
+
+    # Stochastic appreciation per trajectory per year (N, T)
+    appreciation = _draw_normal_returns(
+        rng,
+        mean=params.annual_appreciation,
+        sigma=params.appreciation_volatility,
+        shape=(N, T),
+    )
+
+    if params.financing is None:
+        return _real_estate_mc_cash(params, horizon_years, appreciation)
+
+    if portfolio_for_internal is None:
+        raise ValueError(
+            "simulate_real_estate_mc with financing requires portfolio_for_internal"
+        )
+    if capital_initial is None:
+        capital_initial = params.property_value
+    return _real_estate_mc_financed(
+        params, horizon_years, appreciation, capital_initial,
+        portfolio_for_internal, rng,
+    )
+
+
+def _real_estate_mc_cash(
+    params: RealEstateParams,
+    horizon_years: int,
+    appreciation: np.ndarray,
+) -> MonteCarloResult:
+    """Cash purchase MC: appreciation is the only stochastic input."""
+    N, T = appreciation.shape
+    # Property values: shape (N, T+1). Year 0 = initial value.
+    appreciation_factors = np.concatenate(
+        [np.ones((N, 1)), np.cumprod(1 + appreciation, axis=1)], axis=1,
+    )
+    property_values = params.property_value * appreciation_factors
+
+    # Annual rent net per trajectory: grows with same appreciation factors
+    annual_net_income = params.net_annual_income() * appreciation_factors
+
+    # Reinvest accumulated rent at stochastic rate (net_yield + appreciation_t)
+    rate = params.net_yield() + appreciation  # (N, T)
+    accumulated = np.zeros((N, T + 1))
+    for t in range(T):
+        accumulated[:, t + 1] = accumulated[:, t] * (1 + rate[:, t]) + annual_net_income[:, t + 1]
+
+    trajectories = property_values + accumulated
+
+    return MonteCarloResult(
+        trajectories=trajectories,
+        percentiles=_compute_percentiles(trajectories),
+        final_distribution=trajectories[:, -1].copy(),
+        max_drawdowns=_compute_max_drawdowns(trajectories),
+        label="Imóvel (MC)",
+        color="#C0392B",
+    )
+
+
+def _real_estate_mc_financed(
+    params: RealEstateParams,
+    horizon_years: int,
+    appreciation: np.ndarray,
+    capital_initial: float,
+    portfolio_for_internal: PortfolioParams,
+    rng: np.random.Generator,
+) -> MonteCarloResult:
+    """Financed MC. Skeleton — full implementation in Task 5."""
+    raise NotImplementedError("Implemented in Task 5")
+
+
 def simulate_portfolio(
     params: PortfolioParams,
     horizon_years: int,
