@@ -12,7 +12,12 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-from config import RealEstateParams, PortfolioParams, BenchmarkParams
+from config import (
+    BenchmarkParams,
+    FinancingParams,
+    PortfolioParams,
+    RealEstateParams,
+)
 
 
 @dataclass(slots=True)
@@ -23,6 +28,79 @@ class SimulationResult:
     cumulative_income: np.ndarray    # Total income accumulated
     label: str
     color: str
+
+
+@dataclass(slots=True, frozen=True)
+class AmortizationSchedule:
+    """Monthly amortization schedule for a fixed-rate loan."""
+    payments: np.ndarray   # total payment (interest + principal) per month
+    interest: np.ndarray   # interest portion per month
+    principal: np.ndarray  # principal amortization per month
+    balance: np.ndarray    # outstanding balance at END of each month
+
+
+def _sac_schedule(principal: float, monthly_rate: float, n_months: int) -> AmortizationSchedule:
+    """Sistema de Amortização Constante: principal constant per month."""
+    amortization = principal / n_months
+    principal_arr = np.full(n_months, amortization)
+    # Balance at the START of month k (0-indexed): principal - k * amortization
+    balance_start = principal - np.arange(n_months) * amortization
+    interest = balance_start * monthly_rate
+    payments = principal_arr + interest
+    balance_end = balance_start - principal_arr
+    # Numerical drift cleanup: enforce final balance = 0
+    balance_end[-1] = 0.0
+    return AmortizationSchedule(
+        payments=payments,
+        interest=interest,
+        principal=principal_arr,
+        balance=balance_end,
+    )
+
+
+def _price_schedule(principal: float, monthly_rate: float, n_months: int) -> AmortizationSchedule:
+    """Price (French) system: constant payment per month."""
+    if monthly_rate == 0:
+        amortization = principal / n_months
+        return AmortizationSchedule(
+            payments=np.full(n_months, amortization),
+            interest=np.zeros(n_months),
+            principal=np.full(n_months, amortization),
+            balance=principal - np.arange(1, n_months + 1) * amortization,
+        )
+
+    factor = (1 + monthly_rate) ** n_months
+    pmt = principal * monthly_rate * factor / (factor - 1)
+
+    payments = np.full(n_months, pmt)
+    interest = np.zeros(n_months)
+    principal_arr = np.zeros(n_months)
+    balance = np.zeros(n_months)
+
+    saldo = principal
+    for k in range(n_months):
+        interest[k] = saldo * monthly_rate
+        principal_arr[k] = pmt - interest[k]
+        saldo -= principal_arr[k]
+        balance[k] = saldo
+    # Numerical drift cleanup
+    balance[-1] = 0.0
+    return AmortizationSchedule(
+        payments=payments,
+        interest=interest,
+        principal=principal_arr,
+        balance=balance,
+    )
+
+
+def build_schedule(financing: FinancingParams, principal: float) -> AmortizationSchedule:
+    """Dispatch to SAC or Price based on financing.system."""
+    n_months = financing.term_years * 12
+    if financing.system == "SAC":
+        return _sac_schedule(principal, financing.monthly_rate, n_months)
+    if financing.system == "Price":
+        return _price_schedule(principal, financing.monthly_rate, n_months)
+    raise ValueError(f"unknown amortization system: {financing.system}")
 
 
 def simulate_real_estate(

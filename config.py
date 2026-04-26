@@ -7,7 +7,7 @@ dashboard. Updating values here propagates to every screen.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Final, Literal
 
 
 # ---------- Macro context (Apr/2026) ----------
@@ -40,6 +40,22 @@ MACRO_FALLBACK: Final[MacroParams] = MacroParams(
 )
 
 
+# ---------- Financing ----------
+
+@dataclass(slots=True, frozen=True)
+class FinancingParams:
+    """Real-estate financing terms (loan principal, rate, system, insurance)."""
+    term_years: int = 30
+    annual_rate: float = 0.115
+    entry_pct: float = 0.20
+    system: Literal["SAC", "Price"] = "SAC"
+    monthly_insurance_rate: float = 0.0005
+
+    @property
+    def monthly_rate(self) -> float:
+        return (1 + self.annual_rate) ** (1 / 12) - 1
+
+
 # ---------- Real Estate defaults (R$ 230k in São Paulo) ----------
 
 @dataclass(slots=True)
@@ -54,6 +70,7 @@ class RealEstateParams:
     insurance_annual: float = 600.0
     income_tax_bracket: float = 0.075         # carnê-leão typical bracket
     acquisition_cost_pct: float = 0.05        # ITBI + cartório
+    financing: FinancingParams | None = None
 
     def gross_annual_rent(self) -> float:
         return self.monthly_rent * 12
