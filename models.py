@@ -171,7 +171,11 @@ def _simulate_real_estate_financed(
 ) -> SimulationResult:
     """Financed purchase: entry + monthly amortization, surplus invested at internal_portfolio_rate."""
     fin = params.financing
-    assert fin is not None  # caller ensures this
+    if fin is None:
+        raise ValueError(
+            "_simulate_real_estate_financed requires params.financing to be set; "
+            "use simulate_real_estate() dispatcher instead."
+        )
 
     entry = params.property_value * fin.entry_pct
     if capital_initial < entry:
