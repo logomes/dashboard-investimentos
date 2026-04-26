@@ -368,14 +368,15 @@ def debt_evolution_chart(
         fill="tozeroy",
         line=dict(color=PALETTE["imovel"], width=2),
         name="Saldo devedor",
+        hovertemplate="Ano %{x}<br>Saldo: R$ %{y:,.0f}<extra></extra>",
     ))
     fig.update_layout(
-        title="Saldo devedor ao longo do tempo",
+        **{**_LAYOUT_DEFAULTS, "showlegend": False},
+        title="Saldo Devedor ao Longo do Tempo",
         xaxis_title="Ano",
         yaxis_title="Saldo (R$)",
-        yaxis=dict(tickformat=",.0f", separatethousands=True),
-        plot_bgcolor=PALETTE["background"],
-        margin=dict(l=20, r=20, t=50, b=40),
-        height=320,
+        height=360,
     )
+    fig.update_yaxes(tickformat=",.0f", tickprefix="R$ ")
+    fig.update_xaxes(dtick=1)
     return fig

@@ -29,6 +29,7 @@ class SimulationResult:
     label: str
     color: str
     debt_balance: np.ndarray | None = None    # outstanding loan balance at end of each year (financed only)
+    internal_portfolio: np.ndarray | None = None  # internal portfolio buffer evolution (financed only)
 
 
 @dataclass(slots=True, frozen=True)
@@ -252,6 +253,7 @@ def _simulate_real_estate_financed(
         label="Imóvel (financiado)",
         color="#C0392B",
         debt_balance=debt_balance,
+        internal_portfolio=internal_portfolio,
     )
 
 

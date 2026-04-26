@@ -27,7 +27,9 @@ from services.macro import get_macro_params
 from models import (
     annual_tax_comparison,
     build_comparison_dataframe,
+    build_schedule,
     sensitivity_real_estate,
+    SimulationResult,
     simulate_benchmark,
     simulate_portfolio,
     simulate_real_estate,
@@ -216,9 +218,9 @@ def render_overview(re_params: RealEstateParams,
                     horizon: int,
                     reinvest: bool,
                     macro: MacroParams,
-                    re_result,
-                    pf_result,
-                    bench_result) -> None:
+                    re_result: SimulationResult,
+                    pf_result: SimulationResult,
+                    bench_result: SimulationResult) -> None:
     """Top-level KPI dashboard and patrimony evolution."""
     final_re = re_result.patrimony[-1]
     final_pf = pf_result.patrimony[-1]
@@ -298,7 +300,7 @@ def render_overview(re_params: RealEstateParams,
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
-def render_real_estate(re_params: RealEstateParams, re_result) -> None:
+def render_real_estate(re_params: RealEstateParams, re_result: SimulationResult) -> None:
     """Detailed real estate breakdown."""
     st.markdown("## 🏠 Análise do Imóvel")
 
@@ -314,8 +316,6 @@ def render_real_estate(re_params: RealEstateParams, re_result) -> None:
                    delta_color="inverse")
 
     if re_params.financing is not None and re_result.debt_balance is not None:
-        from models import build_schedule
-
         fin = re_params.financing
         entry = re_params.property_value * fin.entry_pct
         loan = re_params.property_value - entry
@@ -333,11 +333,8 @@ def render_real_estate(re_params: RealEstateParams, re_result) -> None:
         cols[2].metric("Total de juros", f"R$ {total_interest:,.0f}".replace(",", "."))
         cols[3].metric("Prazo", f"{fin.term_years} anos")
 
-        # Internal portfolio = patrimony - property_value_t + debt_balance
-        property_values = re_params.property_value * (1 + re_params.annual_appreciation) ** re_result.years
-        internal_portfolio = re_result.patrimony - property_values + re_result.debt_balance
-        if internal_portfolio.min() < 0:
-            negative_year = int(re_result.years[internal_portfolio < 0][0])
+        if re_result.internal_portfolio is not None and re_result.internal_portfolio.min() < 0:
+            negative_year = int(re_result.years[re_result.internal_portfolio < 0][0])
             st.warning(
                 f"⚠️ Cenário com fluxo negativo: a carteira interna do Imóvel fica deficitária "
                 f"a partir do ano {negative_year}. Em vida real, isso exigiria injeção de capital "
@@ -507,9 +504,9 @@ def render_export(re_params: RealEstateParams,
                   horizon: int,
                   reinvest: bool,
                   macro: MacroParams,
-                  re_result,
-                  pf_result,
-                  bench_result) -> None:
+                  re_result: SimulationResult,
+                  pf_result: SimulationResult,
+                  bench_result: SimulationResult) -> None:
     """Export simulation results to CSV."""
     st.markdown("## 📥 Exportar Dados")
 
