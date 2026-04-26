@@ -106,29 +106,41 @@ def simulate_real_estate(
     params: RealEstateParams,
     horizon_years: int,
     reinvest_income: bool = True,
+    capital_initial: float | None = None,
+    internal_portfolio_rate: float = 0.0,
 ) -> SimulationResult:
-    """Simulate real estate investment over time.
+    """Top-level dispatcher for real estate scenario.
 
-    Patrimony grows by appreciation. Income from rent compounds only if
-    reinvested at the same blended yield as a generic portfolio (assumed to
-    match `params.total_return()` — net yield + appreciation).
+    Routes to the cash variant (Phase 1, no financing) or the financed
+    variant based on `params.financing`.
     """
     if horizon_years <= 0:
         raise ValueError("horizon_years must be positive")
+    if params.financing is None:
+        return _simulate_real_estate_cash(params, horizon_years, reinvest_income)
+    if capital_initial is None:
+        capital_initial = params.property_value
+    return _simulate_real_estate_financed(
+        params, horizon_years, reinvest_income, capital_initial, internal_portfolio_rate,
+    )
 
+
+def _simulate_real_estate_cash(
+    params: RealEstateParams,
+    horizon_years: int,
+    reinvest_income: bool,
+) -> SimulationResult:
+    """Cash purchase: original Phase 1 behavior, untouched."""
     years = np.arange(0, horizon_years + 1)
 
-    # Property value evolution
     property_values = params.property_value * (1 + params.annual_appreciation) ** years
 
-    # Annual rent grows with appreciation as well (typical IGP-M / IPCA reajuste)
     annual_net_income = np.array([
         params.net_annual_income() * (1 + params.annual_appreciation) ** y
         for y in years
     ])
 
     if reinvest_income:
-        # Reinvested at the same blended return rate
         rate = params.total_return()
         accumulated = np.zeros_like(years, dtype=float)
         for i in range(1, len(years)):
@@ -147,6 +159,17 @@ def simulate_real_estate(
         label="Imóvel",
         color="#C0392B",
     )
+
+
+def _simulate_real_estate_financed(
+    params: RealEstateParams,
+    horizon_years: int,
+    reinvest_income: bool,
+    capital_initial: float,
+    internal_portfolio_rate: float,
+) -> SimulationResult:
+    """Financed purchase. Skeleton — full implementation in Task 4."""
+    raise NotImplementedError("Implemented in Task 4")
 
 
 def simulate_portfolio(
