@@ -54,3 +54,76 @@ def test_monte_carlo_result_prob_target():
     assert result.prob_target(1000.0) == pytest.approx(0.0)
     # All trajectories ≥ 0
     assert result.prob_target(0.0) == pytest.approx(1.0)
+
+
+# ---------- simulate_portfolio_mc ----------
+
+def _make_mc_portfolio(volatility=0.0, monthly_contribution=0.0, indexed=True):
+    """Single-asset deterministic portfolio for MC tests; volatility configurable."""
+    from config import AssetClass, PortfolioParams
+    pf = PortfolioParams(
+        capital=100_000.0,
+        monthly_contribution=monthly_contribution,
+        contribution_inflation_indexed=indexed,
+    )
+    pf.assets = [
+        AssetClass("Test", weight=1.0, expected_yield=0.10,
+                   capital_gain=0.0, tax_rate=0.0, volatility=volatility),
+    ]
+    return pf
+
+
+def test_portfolio_mc_zero_volatility_collapses_to_deterministic():
+    """volatility=0 → all trajectories identical → p10=p50=p90."""
+    from config import MonteCarloParams
+    from models import simulate_portfolio_mc
+
+    pf = _make_mc_portfolio(volatility=0.0)
+    mc_params = MonteCarloParams(n_trajectories=100, seed=42)
+    result = simulate_portfolio_mc(pf, horizon_years=5, mc_params=mc_params)
+
+    np.testing.assert_allclose(result.percentiles["p10"], result.percentiles["p50"])
+    np.testing.assert_allclose(result.percentiles["p50"], result.percentiles["p90"])
+    # Final value matches deterministic compounding
+    expected_final = 100_000.0 * (1.10 ** 5)
+    assert result.percentiles["p50"][-1] == pytest.approx(expected_final, rel=1e-6)
+
+
+def test_portfolio_mc_seed_reproducibility():
+    from config import MonteCarloParams
+    from models import simulate_portfolio_mc
+
+    pf = _make_mc_portfolio(volatility=0.15)
+    mc_params = MonteCarloParams(n_trajectories=500, seed=42)
+    a = simulate_portfolio_mc(pf, horizon_years=10, mc_params=mc_params)
+    b = simulate_portfolio_mc(pf, horizon_years=10, mc_params=mc_params)
+    np.testing.assert_array_equal(a.trajectories, b.trajectories)
+
+
+def test_portfolio_mc_shape():
+    from config import MonteCarloParams
+    from models import simulate_portfolio_mc
+
+    pf = _make_mc_portfolio(volatility=0.10)
+    mc_params = MonteCarloParams(n_trajectories=1000, seed=42)
+    result = simulate_portfolio_mc(pf, horizon_years=20, mc_params=mc_params)
+
+    assert result.trajectories.shape == (1000, 21)
+    assert result.final_distribution.shape == (1000,)
+    assert result.max_drawdowns.shape == (1000,)
+    for key in ("p10", "p50", "p90"):
+        assert result.percentiles[key].shape == (21,)
+
+
+def test_portfolio_mc_indexed_contribution_grows_mean():
+    """With monthly_contribution > 0 indexed, mean trajectory is monotonically increasing."""
+    from config import MonteCarloParams
+    from models import simulate_portfolio_mc
+
+    pf = _make_mc_portfolio(volatility=0.0, monthly_contribution=1_000, indexed=True)
+    mc_params = MonteCarloParams(n_trajectories=10, seed=42)
+    result = simulate_portfolio_mc(pf, horizon_years=5, mc_params=mc_params, ipca=0.05)
+
+    # With volatility=0, all trajectories identical; mean = single trajectory
+    mean_traj = result.trajectories.mean(axis=0)
+    assert np.all(np.diff(mean_traj) > 0)  # strictly increasing

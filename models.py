@@ -15,6 +15,7 @@ import pandas as pd
 from config import (
     BenchmarkParams,
     FinancingParams,
+    MonteCarloParams,
     PortfolioParams,
     RealEstateParams,
 )
@@ -357,6 +358,62 @@ def simulate_portfolio(
         annual_income=annual_income,
         cumulative_income=cumulative_income,
         label="Carteira Diversificada",
+        color="#27AE60",
+    )
+
+
+def simulate_portfolio_mc(
+    params: PortfolioParams,
+    horizon_years: int,
+    mc_params: MonteCarloParams,
+    ipca: float = 0.0,
+) -> MonteCarloResult:
+    """Monte Carlo simulation of the diversified portfolio.
+
+    Each year, each asset's net return is drawn from N(mean, volatility^2)
+    independently. Portfolio return = weighted sum across assets. Aporte
+    mensal is deterministic (PMT-begin: added at the start of the year,
+    compounded with that year's return).
+    """
+    if horizon_years <= 0:
+        raise ValueError("horizon_years must be positive")
+
+    rng = np.random.default_rng(mc_params.seed)
+    N, T = mc_params.n_trajectories, horizon_years
+    K = len(params.assets)
+
+    weights = np.array([a.weight for a in params.assets])
+    means = np.array([
+        a.expected_yield * (1 - a.tax_rate) + a.capital_gain
+        for a in params.assets
+    ])
+    sigmas = np.array([a.volatility for a in params.assets])
+
+    # Per-trajectory per-year per-asset draws: shape (N, T, K)
+    draws = rng.normal(loc=means, scale=sigmas, size=(N, T, K))
+    # Portfolio return = weighted sum across assets: shape (N, T)
+    portfolio_returns = (draws * weights).sum(axis=2)
+
+    monthly = params.monthly_contribution
+    indexed = params.contribution_inflation_indexed
+    annual_base = 12.0 * monthly
+
+    trajectories = np.zeros((N, T + 1))
+    trajectories[:, 0] = params.capital
+    for t in range(T):
+        if monthly > 0:
+            aporte_t = annual_base * ((1 + ipca) ** t if indexed else 1.0)
+        else:
+            aporte_t = 0.0
+        # PMT-begin: add aporte first, then compound with year's return
+        trajectories[:, t + 1] = (trajectories[:, t] + aporte_t) * (1 + portfolio_returns[:, t])
+
+    return MonteCarloResult(
+        trajectories=trajectories,
+        percentiles=_compute_percentiles(trajectories),
+        final_distribution=trajectories[:, -1],
+        max_drawdowns=_compute_max_drawdowns(trajectories),
+        label="Carteira (MC)",
         color="#27AE60",
     )
 
