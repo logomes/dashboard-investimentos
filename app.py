@@ -16,6 +16,7 @@ import streamlit as st
 
 from config import (
     BenchmarkParams,
+    FinancingParams,
     MacroParams,
     PALETTE,
     PortfolioParams,
@@ -121,6 +122,24 @@ def render_sidebar(macro: MacroParams) -> tuple[RealEstateParams, PortfolioParam
     re_params.income_tax_bracket = st.sidebar.slider(
         "IR sobre aluguel (%)", 0.0, 27.5, 7.5, 0.5) / 100
 
+    financing_enabled = st.sidebar.checkbox(
+        "Financiar imóvel",
+        value=False,
+        help="Quando ligado, simula entrada + parcelas. Capital inicial cobre a entrada; sobra entra na carteira interna.",
+    )
+    if financing_enabled:
+        with st.sidebar.expander("Detalhes do financiamento", expanded=True):
+            entry_pct = st.slider("Entrada (% do imóvel)", 10, 80, 20, 5) / 100
+            term_years = st.slider("Prazo (anos)", 5, 35, 30, 1)
+            annual_rate = st.slider("Taxa anual (%)", 6.0, 18.0, 11.5, 0.25) / 100
+            system = st.radio("Sistema", ["SAC", "Price"], horizontal=True)
+        re_params.financing = FinancingParams(
+            term_years=term_years,
+            annual_rate=annual_rate,
+            entry_pct=entry_pct,
+            system=system,
+        )
+
     st.sidebar.markdown("---")
     st.sidebar.subheader("💰 Aporte mensal (Carteira)")
     monthly_contribution = st.sidebar.number_input(
@@ -179,8 +198,12 @@ def _run_simulations(
     ipca: float,
 ):
     """Run all three simulations consistently for both overview and export."""
+    re_kwargs = {}
+    if re_params.financing is not None:
+        re_kwargs["capital_initial"] = re_params.property_value
+        re_kwargs["internal_portfolio_rate"] = pf_params.total_return()
     return (
-        simulate_real_estate(re_params, horizon, reinvest),
+        simulate_real_estate(re_params, horizon, reinvest, **re_kwargs),
         simulate_portfolio(pf_params, horizon, reinvest, ipca=ipca),
         simulate_benchmark(bench_params, horizon),
     )
@@ -251,7 +274,7 @@ def render_overview(re_params: RealEstateParams,
     st.markdown("### Tabela consolidada")
     df = pd.DataFrame([
         {
-            "Cenário": "Imóvel",
+            "Cenário": re_result.label,
             "Yield líquido": f"{re_params.net_yield():.2%}",
             "Retorno total a.a.": f"{re_params.total_return():.2%}",
             f"Patrimônio Ano {horizon}": f"R$ {final_re:,.0f}".replace(",", "."),
@@ -488,6 +511,17 @@ def main() -> None:
         )
 
     re_params, pf_params, bench_params, horizon, reinvest = render_sidebar(macro)
+
+    if re_params.financing is not None:
+        entry_required = re_params.property_value * re_params.financing.entry_pct
+        capital_initial = re_params.property_value
+        if capital_initial < entry_required:
+            st.error(
+                f"Capital insuficiente: a entrada exige R$ {entry_required:,.0f}".replace(",", ".")
+                + f", mas o capital inicial é R$ {capital_initial:,.0f}.".replace(",", ".")
+                + " Aumente o capital ou reduza a % de entrada."
+            )
+            st.stop()
 
     tabs = st.tabs([
         "📌 Visão Geral",
