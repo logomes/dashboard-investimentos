@@ -28,6 +28,7 @@ class SimulationResult:
     cumulative_income: np.ndarray    # Total income accumulated
     label: str
     color: str
+    debt_balance: np.ndarray | None = None    # outstanding loan balance at end of each year (financed only)
 
 
 @dataclass(slots=True, frozen=True)
