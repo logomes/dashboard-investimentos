@@ -70,6 +70,7 @@ class RealEstateParams:
     insurance_annual: float = 600.0
     income_tax_bracket: float = 0.075         # carnê-leão typical bracket
     acquisition_cost_pct: float = 0.05        # ITBI + cartório
+    appreciation_volatility: float = 0.10     # σ anual da valorização
     financing: FinancingParams | None = None
 
     def gross_annual_rent(self) -> float:
@@ -123,6 +124,7 @@ class AssetClass:
     capital_gain: float = 0.0
     tax_rate: float = 0.0
     note: str = ""
+    volatility: float = 0.15   # σ anual do retorno total (yield + capital gain)
 
     @property
     def gross_return(self) -> float:
@@ -138,15 +140,20 @@ class PortfolioParams:
     capital: float = 230_000.0
     assets: list[AssetClass] = field(default_factory=lambda: [
         AssetClass("FIIs de Papel",         0.25, 0.130, 0.00, 0.00,
-                   "HGCR11, KNCR11, RBRR11 — isento PF"),
+                   "HGCR11, KNCR11, RBRR11 — isento PF",
+                   volatility=0.14),
         AssetClass("FIIs de Tijolo",        0.25, 0.090, 0.02, 0.00,
-                   "HGLG11, XPML11, KNRI11 — isento PF"),
+                   "HGLG11, XPML11, KNRI11 — isento PF",
+                   volatility=0.16),
         AssetClass("Ações BR Dividendos",   0.20, 0.090, 0.03, 0.00,
-                   "ITSA4, BBAS3, TAEE11, EGIE3"),
+                   "ITSA4, BBAS3, TAEE11, EGIE3",
+                   volatility=0.27),
         AssetClass("Dividend Aristocrats US", 0.15, 0.040, 0.06, 0.30,
-                   "JNJ, ABBV, O, MSFT (via Avenue)"),
+                   "JNJ, ABBV, O, MSFT (via Avenue)",
+                   volatility=0.18),
         AssetClass("Tesouro IPCA+ / LCI",   0.15, 0.115, 0.00, 0.10,
-                   "NTN-B 2035, LCI 100% CDI"),
+                   "NTN-B 2035, LCI 100% CDI",
+                   volatility=0.05),
     ])
     monthly_contribution: float = 0.0           # R$/month, in today's value
     contribution_inflation_indexed: bool = True
@@ -171,6 +178,16 @@ class PortfolioParams:
 
     def annual_income(self) -> float:
         return self.capital * self.blended_yield()
+
+
+# ---------- Monte Carlo ----------
+
+@dataclass(slots=True, frozen=True)
+class MonteCarloParams:
+    """Parameters for Monte Carlo stochastic simulation."""
+    n_trajectories: int = 10_000
+    seed: int = 42
+    target_patrimony: float = 0.0   # 0 desativa cálculo de prob de bater meta
 
 
 # ---------- Reference benchmark (Tesouro Selic líquido) ----------
