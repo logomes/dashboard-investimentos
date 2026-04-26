@@ -15,6 +15,7 @@ import pandas as pd
 from config import (
     BenchmarkParams,
     FinancingParams,
+    MonteCarloParams,
     PortfolioParams,
     RealEstateParams,
 )
@@ -30,6 +31,52 @@ class SimulationResult:
     color: str
     debt_balance: np.ndarray | None = None    # outstanding loan balance at end of each year (financed only)
     internal_portfolio: np.ndarray | None = None  # internal portfolio buffer evolution (financed only)
+
+
+@dataclass(slots=True, frozen=True)
+class MonteCarloResult:
+    """Outcome of a Monte Carlo simulation: trajectories + summary stats."""
+    trajectories: np.ndarray         # shape (N, horizon+1) — patrimônio ano a ano
+    percentiles: dict                # {"p10","p50","p90"} — cada um shape (horizon+1,)
+    final_distribution: np.ndarray   # shape (N,) — patrimônio no ano final
+    max_drawdowns: np.ndarray        # shape (N,) — peak-to-trough drop por trajetória
+    label: str
+    color: str
+
+    def prob_target(self, target: float) -> float:
+        """Fração de trajetórias onde patrimônio final >= target."""
+        return float((self.final_distribution >= target).mean())
+
+
+def _draw_normal_returns(
+    rng: np.random.Generator,
+    mean: float,
+    sigma: float,
+    shape: tuple,
+) -> np.ndarray:
+    """Generate normal random returns with given shape, mean, and sigma."""
+    return rng.normal(loc=mean, scale=sigma, size=shape)
+
+
+def _compute_percentiles(trajectories: np.ndarray) -> dict:
+    """Compute p10/p50/p90 across trajectories (axis=0) for each year."""
+    return {
+        "p10": np.percentile(trajectories, 10, axis=0),
+        "p50": np.percentile(trajectories, 50, axis=0),
+        "p90": np.percentile(trajectories, 90, axis=0),
+    }
+
+
+def _compute_max_drawdowns(trajectories: np.ndarray) -> np.ndarray:
+    """Peak-to-trough relative drop per trajectory.
+
+    Returns positive fractions in [0, 1]. A trajectory that only grows has drawdown 0.
+    """
+    running_max = np.maximum.accumulate(trajectories, axis=1)
+    # Avoid divide-by-zero: where running_max == 0, drawdown is 0
+    safe_max = np.where(running_max == 0, 1.0, running_max)
+    drawdowns = (running_max - trajectories) / safe_max
+    return drawdowns.max(axis=1)
 
 
 @dataclass(slots=True, frozen=True)
@@ -257,6 +304,192 @@ def _simulate_real_estate_financed(
     )
 
 
+def simulate_real_estate_mc(
+    params: RealEstateParams,
+    horizon_years: int,
+    mc_params: MonteCarloParams,
+    capital_initial: float | None = None,
+    portfolio_for_internal: PortfolioParams | None = None,
+) -> MonteCarloResult:
+    """Monte Carlo simulation of the real estate scenario.
+
+    Appreciation is stochastic per trajectory per year. For the cash variant,
+    rent grows with each trajectory's own appreciation and is reinvested at
+    a stochastic rate. For the financed variant, the schedule is deterministic
+    (contract rate is fixed) but the internal portfolio uses a Carteira-blended
+    stochastic return drawn from `portfolio_for_internal`.
+    """
+    if horizon_years <= 0:
+        raise ValueError("horizon_years must be positive")
+
+    rng = np.random.default_rng(mc_params.seed + 1)  # offset: independent stream from Carteira
+    N, T = mc_params.n_trajectories, horizon_years
+
+    # Stochastic appreciation per trajectory per year (N, T)
+    appreciation = _draw_normal_returns(
+        rng,
+        mean=params.annual_appreciation,
+        sigma=params.appreciation_volatility,
+        shape=(N, T),
+    )
+
+    if params.financing is None:
+        return _real_estate_mc_cash(params, horizon_years, appreciation)
+
+    if portfolio_for_internal is None:
+        raise ValueError(
+            "simulate_real_estate_mc with financing requires portfolio_for_internal"
+        )
+    if capital_initial is None:
+        capital_initial = params.property_value
+    return _real_estate_mc_financed(
+        params, horizon_years, appreciation, capital_initial,
+        portfolio_for_internal, rng,
+    )
+
+
+def _real_estate_mc_cash(
+    params: RealEstateParams,
+    horizon_years: int,
+    appreciation: np.ndarray,
+) -> MonteCarloResult:
+    """Cash purchase MC: appreciation is the only stochastic input."""
+    N, T = appreciation.shape
+    # Property values: shape (N, T+1). Year 0 = initial value.
+    appreciation_factors = np.concatenate(
+        [np.ones((N, 1)), np.cumprod(1 + appreciation, axis=1)], axis=1,
+    )
+    property_values = params.property_value * appreciation_factors
+
+    # Annual rent net per trajectory: grows with same appreciation factors
+    annual_net_income = params.net_annual_income() * appreciation_factors
+
+    # Reinvest accumulated rent at stochastic rate (net_yield + appreciation_t)
+    rate = params.net_yield() + appreciation  # (N, T)
+    accumulated = np.zeros((N, T + 1))
+    for t in range(T):
+        accumulated[:, t + 1] = accumulated[:, t] * (1 + rate[:, t]) + annual_net_income[:, t + 1]
+
+    trajectories = property_values + accumulated
+
+    return MonteCarloResult(
+        trajectories=trajectories,
+        percentiles=_compute_percentiles(trajectories),
+        final_distribution=trajectories[:, -1].copy(),
+        max_drawdowns=_compute_max_drawdowns(trajectories),
+        label="Imóvel (MC)",
+        color="#C0392B",
+    )
+
+
+def _real_estate_mc_financed(
+    params: RealEstateParams,
+    horizon_years: int,
+    appreciation: np.ndarray,
+    capital_initial: float,
+    portfolio_for_internal: PortfolioParams,
+    rng: np.random.Generator,
+) -> MonteCarloResult:
+    """Financed MC: stochastic appreciation + stochastic internal portfolio.
+
+    Schedule (parcela, juros, saldo) is deterministic (contract rate fixed).
+    Internal portfolio compounds with a Carteira-blended stochastic return.
+    """
+    fin = params.financing
+    if fin is None:
+        raise ValueError(
+            "_real_estate_mc_financed requires params.financing to be set"
+        )
+    N, T = appreciation.shape
+
+    # Deterministic schedule (Phase 2 financing logic, mirroring _simulate_real_estate_financed)
+    entry = params.property_value * fin.entry_pct
+    if capital_initial < entry:
+        raise ValueError(
+            f"capital_initial ({capital_initial:.2f}) is below the required "
+            f"entry ({entry:.2f}) at entry_pct={fin.entry_pct:.0%}."
+        )
+    loan_principal = params.property_value - entry
+    initial_buffer = capital_initial - entry
+
+    schedule = build_schedule(fin, loan_principal)
+
+    n_months_horizon = T * 12
+    n_months_term = fin.term_years * 12
+    if n_months_horizon > n_months_term:
+        pad = n_months_horizon - n_months_term
+        payments_full = np.concatenate([schedule.payments, np.zeros(pad)])
+        balance_full = np.concatenate([schedule.balance, np.zeros(pad)])
+    elif n_months_horizon < n_months_term:
+        payments_full = schedule.payments[:n_months_horizon]
+        balance_full = schedule.balance[:n_months_horizon]
+    else:
+        payments_full = schedule.payments
+        balance_full = schedule.balance
+
+    payments_annual = payments_full.reshape(T, 12).sum(axis=1)  # (T,)
+    balance_at_month_start = np.concatenate([[loan_principal], balance_full[:-1]])
+    insurance_monthly = balance_at_month_start * fin.monthly_insurance_rate
+    insurance_annual = insurance_monthly.reshape(T, 12).sum(axis=1)  # (T,)
+
+    # Property value per trajectory (N, T+1) using stochastic appreciation
+    appreciation_factors = np.concatenate(
+        [np.ones((N, 1)), np.cumprod(1 + appreciation, axis=1)], axis=1,
+    )
+    property_values = params.property_value * appreciation_factors  # (N, T+1)
+
+    # Debt balance at end of each year (deterministic, broadcast to N)
+    debt_balance_yearly = np.zeros(T + 1)
+    debt_balance_yearly[0] = loan_principal
+    for y in range(1, T + 1):
+        idx = 12 * y - 1
+        if idx < len(balance_full):
+            debt_balance_yearly[y] = balance_full[idx]
+        else:
+            debt_balance_yearly[y] = 0.0
+    debt_balance = np.broadcast_to(debt_balance_yearly, (N, T + 1))
+
+    # Annual rent net per trajectory (grows with each trajectory's appreciation)
+    annual_net_income = params.net_annual_income() * appreciation_factors  # (N, T+1)
+
+    # Stochastic Carteira blended return per trajectory per year (uses portfolio_for_internal)
+    K = len(portfolio_for_internal.assets)
+    weights = np.array([a.weight for a in portfolio_for_internal.assets])
+    means = np.array([
+        a.expected_yield * (1 - a.tax_rate) + a.capital_gain
+        for a in portfolio_for_internal.assets
+    ])
+    sigmas = np.array([a.volatility for a in portfolio_for_internal.assets])
+    carteira_draws = _draw_normal_returns(
+        rng, mean=means, sigma=sigmas, shape=(N, T, K),
+    )
+    carteira_returns = (carteira_draws * weights).sum(axis=2)  # (N, T)
+
+    # Net cash flow per trajectory per year:
+    # rent (stochastic via appreciation) − payments (deterministic) − insurance (deterministic)
+    net_cash_flow = annual_net_income[:, 1:] - payments_annual - insurance_annual  # (N, T)
+
+    # Internal portfolio (PMT-end: compound previous, then add cash flow)
+    internal_portfolio = np.zeros((N, T + 1))
+    internal_portfolio[:, 0] = initial_buffer
+    for t in range(T):
+        internal_portfolio[:, t + 1] = (
+            internal_portfolio[:, t] * (1 + carteira_returns[:, t])
+            + net_cash_flow[:, t]
+        )
+
+    trajectories = property_values - debt_balance + internal_portfolio
+
+    return MonteCarloResult(
+        trajectories=trajectories,
+        percentiles=_compute_percentiles(trajectories),
+        final_distribution=trajectories[:, -1].copy(),
+        max_drawdowns=_compute_max_drawdowns(trajectories),
+        label="Imóvel financiado (MC)",
+        color="#C0392B",
+    )
+
+
 def simulate_portfolio(
     params: PortfolioParams,
     horizon_years: int,
@@ -311,6 +544,62 @@ def simulate_portfolio(
         annual_income=annual_income,
         cumulative_income=cumulative_income,
         label="Carteira Diversificada",
+        color="#27AE60",
+    )
+
+
+def simulate_portfolio_mc(
+    params: PortfolioParams,
+    horizon_years: int,
+    mc_params: MonteCarloParams,
+    ipca: float = 0.0,
+) -> MonteCarloResult:
+    """Monte Carlo simulation of the diversified portfolio.
+
+    Each year, each asset's net return is drawn from N(mean, volatility^2)
+    independently. Portfolio return = weighted sum across assets. Aporte
+    mensal is deterministic (PMT-begin: added at the start of the year,
+    compounded with that year's return).
+    """
+    if horizon_years <= 0:
+        raise ValueError("horizon_years must be positive")
+
+    rng = np.random.default_rng(mc_params.seed)
+    N, T = mc_params.n_trajectories, horizon_years
+    K = len(params.assets)
+
+    weights = np.array([a.weight for a in params.assets])
+    means = np.array([
+        a.expected_yield * (1 - a.tax_rate) + a.capital_gain
+        for a in params.assets
+    ])
+    sigmas = np.array([a.volatility for a in params.assets])
+
+    # Per-trajectory per-year per-asset draws: shape (N, T, K)
+    draws = _draw_normal_returns(rng, mean=means, sigma=sigmas, shape=(N, T, K))
+    # Portfolio return = weighted sum across assets: shape (N, T)
+    portfolio_returns = (draws * weights).sum(axis=2)
+
+    monthly = params.monthly_contribution
+    indexed = params.contribution_inflation_indexed
+    annual_base = 12.0 * monthly
+
+    trajectories = np.zeros((N, T + 1))
+    trajectories[:, 0] = params.capital
+    for t in range(T):
+        if monthly > 0:
+            aporte_t = annual_base * ((1 + ipca) ** t if indexed else 1.0)
+        else:
+            aporte_t = 0.0
+        # PMT-begin: add aporte first, then compound with year's return
+        trajectories[:, t + 1] = (trajectories[:, t] + aporte_t) * (1 + portfolio_returns[:, t])
+
+    return MonteCarloResult(
+        trajectories=trajectories,
+        percentiles=_compute_percentiles(trajectories),
+        final_distribution=trajectories[:, -1].copy(),
+        max_drawdowns=_compute_max_drawdowns(trajectories),
+        label="Carteira (MC)",
         color="#27AE60",
     )
 

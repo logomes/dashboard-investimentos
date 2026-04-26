@@ -18,6 +18,7 @@ from config import (
     BenchmarkParams,
     FinancingParams,
     MacroParams,
+    MonteCarloParams,
     PALETTE,
     PortfolioParams,
     RealEstateParams,
@@ -28,18 +29,22 @@ from models import (
     annual_tax_comparison,
     build_comparison_dataframe,
     build_schedule,
+    MonteCarloResult,
     sensitivity_real_estate,
-    SimulationResult,
     simulate_benchmark,
     simulate_portfolio,
+    simulate_portfolio_mc,
     simulate_real_estate,
+    simulate_real_estate_mc,
+    SimulationResult,
 )
 from charts import (
     annual_income_chart,
     cost_breakdown_chart,
     debt_evolution_chart,
+    distribution_histogram_chart,
     income_vs_costs_waterfall,
-    patrimony_evolution_chart,
+    patrimony_band_chart,
     portfolio_donut_chart,
     risk_return_scatter,
     sensitivity_tornado_chart,
@@ -47,6 +52,8 @@ from charts import (
     yield_comparison_bars,
 )
 
+
+LOSS_RATE_WARNING_THRESHOLD = 0.05  # Trigger banner when >X of trajectories end below capital
 
 # ---------- Page configuration ----------
 
@@ -96,7 +103,7 @@ st.markdown("""
 
 # ---------- Sidebar: Parameters ----------
 
-def render_sidebar(macro: MacroParams) -> tuple[RealEstateParams, PortfolioParams, BenchmarkParams, int, bool]:
+def render_sidebar(macro: MacroParams) -> tuple[RealEstateParams, PortfolioParams, BenchmarkParams, int, bool, MonteCarloParams]:
     """Build sidebar inputs and return parameter objects."""
     st.sidebar.title("⚙️ Parâmetros")
     st.sidebar.caption(f"Cenário macroeconômico: {TODAY_LABEL} — {macro.source_label}")
@@ -183,11 +190,31 @@ def render_sidebar(macro: MacroParams) -> tuple[RealEstateParams, PortfolioParam
         "Taxa Selic (%)", 5.0, 20.0, macro.selic * 100, 0.25) / 100
 
     st.sidebar.markdown("---")
+    st.sidebar.subheader("🎲 Análise estocástica")
+    target_patrimony = st.sidebar.number_input(
+        "Meta de patrimônio (R$)",
+        min_value=0.0, max_value=100_000_000.0, value=0.0, step=50_000.0,
+        format="%.0f",
+        help="Patrimônio-alvo no horizonte. Mostra prob. de bater. 0 desativa.",
+    )
+    with st.sidebar.expander("Volatilidades (σ anual)", expanded=False):
+        for asset in pf_params.assets:
+            asset.volatility = st.slider(
+                f"σ — {asset.name} (%)", 0.0, 50.0, asset.volatility * 100, 1.0,
+                key=f"vol_{asset.name}",
+            ) / 100
+        re_params.appreciation_volatility = st.slider(
+            "σ — Valorização imóvel (%)", 0.0, 30.0,
+            re_params.appreciation_volatility * 100, 1.0,
+        ) / 100
+    mc_params = MonteCarloParams(target_patrimony=target_patrimony)
+
+    st.sidebar.markdown("---")
     if st.sidebar.button("🔄 Recarregar dados macro", use_container_width=True):
         get_macro_params.clear()
         st.rerun()
 
-    return re_params, pf_params, bench_params, horizon, reinvest
+    return re_params, pf_params, bench_params, horizon, reinvest, mc_params
 
 
 # ---------- Page sections ----------
@@ -212,6 +239,23 @@ def _run_simulations(
     )
 
 
+def _run_monte_carlo(
+    re_params: RealEstateParams,
+    pf_params: PortfolioParams,
+    horizon: int,
+    mc_params: MonteCarloParams,
+    ipca: float,
+) -> tuple[MonteCarloResult, MonteCarloResult]:
+    """Run Monte Carlo for both Carteira and Imóvel scenarios."""
+    pf_mc = simulate_portfolio_mc(pf_params, horizon, mc_params, ipca=ipca)
+    re_kwargs = {}
+    if re_params.financing is not None:
+        re_kwargs["capital_initial"] = re_params.property_value
+        re_kwargs["portfolio_for_internal"] = pf_params
+    re_mc = simulate_real_estate_mc(re_params, horizon, mc_params, **re_kwargs)
+    return re_mc, pf_mc
+
+
 def render_overview(re_params: RealEstateParams,
                     pf_params: PortfolioParams,
                     bench_params: BenchmarkParams,
@@ -220,7 +264,9 @@ def render_overview(re_params: RealEstateParams,
                     macro: MacroParams,
                     re_result: SimulationResult,
                     pf_result: SimulationResult,
-                    bench_result: SimulationResult) -> None:
+                    bench_result: SimulationResult,
+                    re_mc: MonteCarloResult,
+                    pf_mc: MonteCarloResult) -> None:
     """Top-level KPI dashboard and patrimony evolution."""
     final_re = re_result.patrimony[-1]
     final_pf = pf_result.patrimony[-1]
@@ -259,7 +305,10 @@ def render_overview(re_params: RealEstateParams,
 
     st.markdown("### Evolução comparativa do patrimônio")
     st.plotly_chart(
-        patrimony_evolution_chart([re_result, pf_result, bench_result]),
+        patrimony_band_chart(
+            [re_mc, pf_mc],
+            deterministic_results=[re_result, pf_result, bench_result],
+        ),
         use_container_width=True,
     )
 
@@ -524,6 +573,89 @@ def render_export(re_params: RealEstateParams,
     )
 
 
+def render_risk(
+    re_mc: MonteCarloResult,
+    pf_mc: MonteCarloResult,
+    mc_params: MonteCarloParams,
+    horizon: int,
+    capital_initial: float,
+) -> None:
+    """Risco tab: probability of meeting target, drawdowns, percentiles, distributions.
+
+    `capital_initial` is currently used as the loss-rate baseline for BOTH
+    Carteira and Imóvel. This works while sidebar couples `property_value`
+    and `pf_params.capital` to the same input. When Phase 3 decouples them,
+    pass separate baselines (re/pf) explicitly.
+    """
+    st.markdown("## 🎲 Análise de risco — Monte Carlo")
+    st.caption(
+        f"Baseado em {mc_params.n_trajectories:,} trajetórias com seed fixa. "
+        "Distribuição normal por ativo; ativos independentes (limitação documentada)."
+        .replace(",", ".")
+    )
+
+    target = mc_params.target_patrimony
+    cols = st.columns(2)
+    with cols[0]:
+        st.markdown("### Carteira (MC)")
+        st.metric("Drawdown médio máximo", f"{pf_mc.max_drawdowns.mean():.1%}")
+        st.metric(f"Patrimônio p10 (ano {horizon})",
+                  f"R$ {pf_mc.percentiles['p10'][-1]:,.0f}".replace(",", "."))
+        st.metric(f"Patrimônio p50 (ano {horizon})",
+                  f"R$ {pf_mc.percentiles['p50'][-1]:,.0f}".replace(",", "."))
+        st.metric(f"Patrimônio p90 (ano {horizon})",
+                  f"R$ {pf_mc.percentiles['p90'][-1]:,.0f}".replace(",", "."))
+        if target > 0:
+            st.metric("Prob. de bater meta", f"{pf_mc.prob_target(target):.1%}")
+    with cols[1]:
+        st.markdown("### Imóvel (MC)")
+        st.metric("Drawdown médio máximo", f"{re_mc.max_drawdowns.mean():.1%}")
+        st.metric(f"Patrimônio p10 (ano {horizon})",
+                  f"R$ {re_mc.percentiles['p10'][-1]:,.0f}".replace(",", "."))
+        st.metric(f"Patrimônio p50 (ano {horizon})",
+                  f"R$ {re_mc.percentiles['p50'][-1]:,.0f}".replace(",", "."))
+        st.metric(f"Patrimônio p90 (ano {horizon})",
+                  f"R$ {re_mc.percentiles['p90'][-1]:,.0f}".replace(",", "."))
+        if target > 0:
+            st.metric("Prob. de bater meta", f"{re_mc.prob_target(target):.1%}")
+
+    # Risk banner: any scenario with >5% trajectories ending below capital
+    pf_loss_rate = float((pf_mc.final_distribution < capital_initial).mean())
+    re_loss_rate = float((re_mc.final_distribution < capital_initial).mean())
+    flagged = []
+    if pf_loss_rate > LOSS_RATE_WARNING_THRESHOLD:
+        flagged.append(f"Carteira: {pf_loss_rate:.1%}")
+    if re_loss_rate > LOSS_RATE_WARNING_THRESHOLD:
+        flagged.append(f"Imóvel: {re_loss_rate:.1%}")
+    if flagged:
+        scenarios_text = "; ".join(flagged)
+        capital_str = f"R$ {capital_initial:,.0f}".replace(",", ".")
+        st.warning(
+            f"⚠️ Trajetórias com perda nominal abaixo de {capital_str} ao final do horizonte: "
+            f"{scenarios_text}. Considere reduzir alocação em ativos de alta σ "
+            f"ou ajustar o horizonte."
+        )
+
+    st.markdown("### Banda do patrimônio (p10–p90)")
+    st.plotly_chart(
+        patrimony_band_chart([re_mc, pf_mc]),
+        use_container_width=True,
+    )
+
+    st.markdown("### Distribuição final do patrimônio")
+    cols2 = st.columns(2)
+    with cols2[0]:
+        st.plotly_chart(
+            distribution_histogram_chart(pf_mc, target=target),
+            use_container_width=True,
+        )
+    with cols2[1]:
+        st.plotly_chart(
+            distribution_histogram_chart(re_mc, target=target),
+            use_container_width=True,
+        )
+
+
 # ---------- Main ----------
 
 def main() -> None:
@@ -542,7 +674,7 @@ def main() -> None:
             f"{TODAY_LABEL}. Tente recarregar em alguns minutos."
         )
 
-    re_params, pf_params, bench_params, horizon, reinvest = render_sidebar(macro)
+    re_params, pf_params, bench_params, horizon, reinvest, mc_params = render_sidebar(macro)
 
     if re_params.financing is not None:
         entry_required = re_params.property_value * re_params.financing.entry_pct
@@ -566,16 +698,18 @@ def main() -> None:
         "📈 Carteira",
         "🎯 Sensibilidade",
         "💸 Tributação",
+        "🎲 Risco",
         "📥 Exportar",
     ])
 
     re_result, pf_result, bench_result = _run_simulations(
         re_params, pf_params, bench_params, horizon, reinvest, macro.ipca,
     )
+    re_mc, pf_mc = _run_monte_carlo(re_params, pf_params, horizon, mc_params, macro.ipca)
 
     with tabs[0]:
         render_overview(re_params, pf_params, bench_params, horizon, reinvest, macro,
-                        re_result, pf_result, bench_result)
+                        re_result, pf_result, bench_result, re_mc, pf_mc)
     with tabs[1]:
         render_real_estate(re_params, re_result)
     with tabs[2]:
@@ -585,6 +719,8 @@ def main() -> None:
     with tabs[4]:
         render_taxes(re_params, pf_params)
     with tabs[5]:
+        render_risk(re_mc, pf_mc, mc_params, horizon, re_params.property_value)
+    with tabs[6]:
         render_export(re_params, pf_params, bench_params, horizon, reinvest, macro,
                       re_result, pf_result, bench_result)
 

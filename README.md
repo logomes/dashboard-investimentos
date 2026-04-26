@@ -44,6 +44,7 @@ Acesse `http://localhost:8501` no navegador.
 - **Carteira**: alocação por classe (donut), yields comparados, aporte mensal opcional indexado pelo IPCA
 - **Sensibilidade**: tornado chart com variação de 6 parâmetros-chave
 - **Tributação**: comparação direta de carga tributária efetiva
+- **Risco (Monte Carlo)**: análise estocástica com 10.000 trajetórias, banda p10/p50/p90, drawdown máximo, probabilidade de bater meta de patrimônio
 - **Exportar**: download da simulação completa em CSV
 
 ## Parâmetros configuráveis
@@ -78,6 +79,19 @@ O cenário Imóvel aceita um modo financiado opcional via toggle na sidebar:
 - **Alerta visual**: se a carteira interna ficar negativa, banner informa o ano em que cruzou zero
 
 Quando o toggle está desligado, comportamento é idêntico ao Phase 1 (compra à vista).
+
+## Análise de risco (Monte Carlo)
+
+Camada estocástica paralela ao caminho determinístico:
+
+- **N=10.000 trajetórias** com seed fixa (42) → resultado reproduzível.
+- **Carteira**: cada classe de ativo tem σ próprio (FIIs ~14-16%, Ações BR ~27%, Aristocrats US ~18%, RF ~5%). Sliders na sidebar permitem sobrescrever.
+- **Imóvel**: σ na valorização anual (default 10%). Aluguel cresce com a apreciação sorteada.
+- **Imóvel financiado**: parcela continua determinística (taxa contratual fixa); carteira interna usa retorno blended estocástico da Carteira.
+- **Aba "🎲 Risco"**: KPIs de probabilidade de bater meta, drawdown médio, percentis p10/p50/p90 do ano final, e histograma da distribuição final.
+- **Visão Geral**: gráfico de patrimônio combina banda sombreada (estocástica) + linhas tracejadas (determinístico).
+
+Limitações documentadas: distribuição normal (caudas finas) e ativos independentes (superestima diversificação). Migrações futuras (t-Student, matriz de correlação, VaR/CVaR) ficam para Phase 3.
 
 ## Observação
 
