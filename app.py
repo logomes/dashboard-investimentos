@@ -263,7 +263,9 @@ def render_overview(re_params: RealEstateParams,
                     macro: MacroParams,
                     re_result: SimulationResult,
                     pf_result: SimulationResult,
-                    bench_result: SimulationResult) -> None:
+                    bench_result: SimulationResult,
+                    re_mc: MonteCarloResult,
+                    pf_mc: MonteCarloResult) -> None:
     """Top-level KPI dashboard and patrimony evolution."""
     final_re = re_result.patrimony[-1]
     final_pf = pf_result.patrimony[-1]
@@ -302,7 +304,10 @@ def render_overview(re_params: RealEstateParams,
 
     st.markdown("### Evolução comparativa do patrimônio")
     st.plotly_chart(
-        patrimony_evolution_chart([re_result, pf_result, bench_result]),
+        patrimony_band_chart(
+            [re_mc, pf_mc],
+            deterministic_results=[re_result, pf_result, bench_result],
+        ),
         use_container_width=True,
     )
 
@@ -567,6 +572,83 @@ def render_export(re_params: RealEstateParams,
     )
 
 
+def render_risk(
+    re_mc: MonteCarloResult,
+    pf_mc: MonteCarloResult,
+    mc_params: MonteCarloParams,
+    horizon: int,
+    capital_initial: float,
+) -> None:
+    """Risco tab: probability of meeting target, drawdowns, percentiles, distributions."""
+    st.markdown("## 🎲 Análise de risco — Monte Carlo")
+    st.caption(
+        f"Baseado em {mc_params.n_trajectories:,} trajetórias com seed fixa. "
+        "Distribuição normal por ativo; ativos independentes (limitação documentada)."
+        .replace(",", ".")
+    )
+
+    target = mc_params.target_patrimony
+    cols = st.columns(2)
+    with cols[0]:
+        st.markdown("### Carteira (MC)")
+        st.metric("Drawdown médio máximo", f"{pf_mc.max_drawdowns.mean():.1%}")
+        st.metric(f"Patrimônio p10 (ano {horizon})",
+                  f"R$ {pf_mc.percentiles['p10'][-1]:,.0f}".replace(",", "."))
+        st.metric(f"Patrimônio p50 (ano {horizon})",
+                  f"R$ {pf_mc.percentiles['p50'][-1]:,.0f}".replace(",", "."))
+        st.metric(f"Patrimônio p90 (ano {horizon})",
+                  f"R$ {pf_mc.percentiles['p90'][-1]:,.0f}".replace(",", "."))
+        if target > 0:
+            st.metric("Prob. de bater meta", f"{pf_mc.prob_target(target):.1%}")
+    with cols[1]:
+        st.markdown("### Imóvel (MC)")
+        st.metric("Drawdown médio máximo", f"{re_mc.max_drawdowns.mean():.1%}")
+        st.metric(f"Patrimônio p10 (ano {horizon})",
+                  f"R$ {re_mc.percentiles['p10'][-1]:,.0f}".replace(",", "."))
+        st.metric(f"Patrimônio p50 (ano {horizon})",
+                  f"R$ {re_mc.percentiles['p50'][-1]:,.0f}".replace(",", "."))
+        st.metric(f"Patrimônio p90 (ano {horizon})",
+                  f"R$ {re_mc.percentiles['p90'][-1]:,.0f}".replace(",", "."))
+        if target > 0:
+            st.metric("Prob. de bater meta", f"{re_mc.prob_target(target):.1%}")
+
+    # Risk banner: any scenario with >5% trajectories ending below capital
+    pf_loss_rate = float((pf_mc.final_distribution < capital_initial).mean())
+    re_loss_rate = float((re_mc.final_distribution < capital_initial).mean())
+    flagged = []
+    if pf_loss_rate > 0.05:
+        flagged.append(f"Carteira: {pf_loss_rate:.1%}")
+    if re_loss_rate > 0.05:
+        flagged.append(f"Imóvel: {re_loss_rate:.1%}")
+    if flagged:
+        st.warning(
+            "⚠️ Trajetórias com perda nominal — "
+            + " | ".join(flagged)
+            + f" das trajetórias terminam abaixo de R$ {capital_initial:,.0f}".replace(",", ".")
+            + " ao final do horizonte. Considere reduzir alocação em ativos de alta σ "
+            + "ou ajustar o horizonte."
+        )
+
+    st.markdown("### Banda do patrimônio (p10–p90)")
+    st.plotly_chart(
+        patrimony_band_chart([re_mc, pf_mc]),
+        use_container_width=True,
+    )
+
+    st.markdown("### Distribuição final do patrimônio")
+    cols2 = st.columns(2)
+    with cols2[0]:
+        st.plotly_chart(
+            distribution_histogram_chart(pf_mc, target=target),
+            use_container_width=True,
+        )
+    with cols2[1]:
+        st.plotly_chart(
+            distribution_histogram_chart(re_mc, target=target),
+            use_container_width=True,
+        )
+
+
 # ---------- Main ----------
 
 def main() -> None:
@@ -609,6 +691,7 @@ def main() -> None:
         "📈 Carteira",
         "🎯 Sensibilidade",
         "💸 Tributação",
+        "🎲 Risco",
         "📥 Exportar",
     ])
 
@@ -619,7 +702,7 @@ def main() -> None:
 
     with tabs[0]:
         render_overview(re_params, pf_params, bench_params, horizon, reinvest, macro,
-                        re_result, pf_result, bench_result)
+                        re_result, pf_result, bench_result, re_mc, pf_mc)
     with tabs[1]:
         render_real_estate(re_params, re_result)
     with tabs[2]:
@@ -629,6 +712,8 @@ def main() -> None:
     with tabs[4]:
         render_taxes(re_params, pf_params)
     with tabs[5]:
+        render_risk(re_mc, pf_mc, mc_params, horizon, re_params.property_value)
+    with tabs[6]:
         render_export(re_params, pf_params, bench_params, horizon, reinvest, macro,
                       re_result, pf_result, bench_result)
 
