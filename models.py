@@ -7,6 +7,7 @@ analysis for real estate vs portfolio scenarios.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Iterable
 
 import numpy as np
@@ -16,6 +17,7 @@ from config import (
     BenchmarkParams,
     FinancingParams,
     FixedIncomePosition,
+    MacroParams,
     MonteCarloParams,
     PortfolioParams,
     RealEstateParams,
@@ -66,6 +68,83 @@ class FixedIncomePortfolio:
     total_gross: np.ndarray
     total_net: np.ndarray
     total_initial: float
+
+
+def simulate_fixed_income(
+    positions: list[FixedIncomePosition],
+    macro: MacroParams,
+    horizon_years: int,
+    start_date: date | None = None,
+) -> FixedIncomePortfolio:
+    """Project each position year-by-year, applying regressive IR and maturity.
+
+    Year 0 corresponds to start_date. Position values at year 0 already reflect
+    accumulated growth from purchase_date to start_date. Macro values are held
+    constant for the entire horizon.
+    """
+    if start_date is None:
+        start_date = date.today()
+    n_points = horizon_years + 1
+    years = np.arange(n_points)
+
+    projections: list[FixedIncomeProjection] = []
+    total_gross = np.zeros(n_points)
+    total_net = np.zeros(n_points)
+    total_initial = 0.0
+
+    for pos in positions:
+        r = pos.effective_annual_rate(macro)
+        gross = np.zeros(n_points)
+        net = np.zeros(n_points)
+        matured = np.zeros(n_points, dtype=bool)
+
+        # Pre-compute frozen value at maturity if applicable.
+        # applicable_ir_rate returns 0 when isento, so the same formula works for both.
+        frozen_gross = None
+        frozen_net = None
+        if pos.maturity_date is not None:
+            mat_holding = max(0, (pos.maturity_date - pos.purchase_date).days)
+            frozen_gross = pos.initial_amount * (1 + r) ** (mat_holding / 365)
+            ir_at_mat = pos.applicable_ir_rate(pos.maturity_date)
+            frozen_net = pos.initial_amount + (frozen_gross - pos.initial_amount) * (1 - ir_at_mat)
+
+        for t in range(n_points):
+            current_date = _add_years(start_date, t)
+            if pos.maturity_date is not None and current_date >= pos.maturity_date:
+                gross[t] = frozen_gross
+                net[t] = frozen_net
+                matured[t] = True
+            else:
+                holding = pos.holding_days(current_date)
+                gross[t] = pos.initial_amount * (1 + r) ** (holding / 365)
+                ir = pos.applicable_ir_rate(current_date)
+                net[t] = pos.initial_amount + (gross[t] - pos.initial_amount) * (1 - ir)
+
+        projections.append(FixedIncomeProjection(
+            position=pos,
+            years=years.copy(),
+            gross_values=gross,
+            net_values=net,
+            matured=matured,
+        ))
+        total_gross += gross
+        total_net += net
+        total_initial += pos.initial_amount
+
+    return FixedIncomePortfolio(
+        projections=projections,
+        total_gross=total_gross,
+        total_net=total_net,
+        total_initial=total_initial,
+    )
+
+
+def _add_years(d: date, years: int) -> date:
+    """Return d + N years, falling back to Feb 28 if Feb 29 is invalid in target year."""
+    try:
+        return d.replace(year=d.year + years)
+    except ValueError:  # Feb 29 in non-leap target year
+        return d.replace(year=d.year + years, day=28)
 
 
 def _draw_normal_returns(

@@ -178,3 +178,111 @@ def test_projection_and_portfolio_dataclasses_construct():
     )
     assert portfolio.total_initial == 1000.0
     assert len(portfolio.projections) == 1
+
+
+def test_simulate_prefixado_3_anos_golden_numbers(macro):
+    """Closed-form check: 1k @ 10% prefixado, 3-year horizon starting at purchase."""
+    from models import simulate_fixed_income
+    pos = FixedIncomePosition(
+        name="X", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="prefixado", rate=0.10,
+    )
+    portfolio = simulate_fixed_income(
+        positions=[pos],
+        macro=macro,
+        horizon_years=3,
+        start_date=date(2025, 1, 1),
+    )
+    proj = portfolio.projections[0]
+    # Year 0: just principal, no growth, no IR
+    np.testing.assert_allclose(proj.gross_values[0], 1000.0)
+    np.testing.assert_allclose(proj.net_values[0], 1000.0)
+    # Year 1: 1100 gross. holding=365 → IR=17.5%. Net = 1000 + 100*0.825 = 1082.5
+    np.testing.assert_allclose(proj.gross_values[1], 1100.0, rtol=1e-6)
+    np.testing.assert_allclose(proj.net_values[1], 1082.5, rtol=1e-6)
+    # Year 2: 1210 gross. holding=730 → IR=15%. Net = 1000 + 210*0.85 = 1178.5
+    np.testing.assert_allclose(proj.gross_values[2], 1210.0, rtol=1e-6)
+    np.testing.assert_allclose(proj.net_values[2], 1178.5, rtol=1e-6)
+    # Year 3: 1331 gross. holding=1095 → IR=15%. Net = 1000 + 331*0.85 = 1281.35
+    np.testing.assert_allclose(proj.gross_values[3], 1331.0, rtol=1e-6)
+    np.testing.assert_allclose(proj.net_values[3], 1281.35, rtol=1e-6)
+
+
+def test_simulate_isento_net_igual_gross(macro):
+    from models import simulate_fixed_income
+    pos = FixedIncomePosition(
+        name="LCI", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="prefixado", rate=0.10, is_tax_exempt=True,
+    )
+    portfolio = simulate_fixed_income(
+        positions=[pos], macro=macro, horizon_years=3,
+        start_date=date(2025, 1, 1),
+    )
+    np.testing.assert_allclose(
+        portfolio.projections[0].net_values,
+        portfolio.projections[0].gross_values,
+    )
+
+
+def test_simulate_vencimento_congela_valor_apos_maturity(macro):
+    """Position with maturity at year 2: years 3+ should equal year-2 value."""
+    from models import simulate_fixed_income
+    pos = FixedIncomePosition(
+        name="X", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="prefixado", rate=0.10,
+        maturity_date=date(2027, 1, 1),  # 2 years after purchase
+    )
+    portfolio = simulate_fixed_income(
+        positions=[pos], macro=macro, horizon_years=5,
+        start_date=date(2025, 1, 1),
+    )
+    proj = portfolio.projections[0]
+    # Year 2: matured. gross=1210 (1000*1.1^2)
+    np.testing.assert_allclose(proj.gross_values[2], 1210.0, rtol=1e-6)
+    # Years 3-5: frozen at year-2 value (gross AND net)
+    for t in (3, 4, 5):
+        np.testing.assert_allclose(proj.gross_values[t], proj.gross_values[2])
+        np.testing.assert_allclose(proj.net_values[t], proj.net_values[2])
+        assert proj.matured[t]
+    # Year 1: not matured
+    assert not proj.matured[1]
+
+
+def test_simulate_posicao_comprada_no_passado_ja_inicia_acumulada(macro):
+    """Position bought 2 years ago should show accumulated value at year 0."""
+    from models import simulate_fixed_income
+    pos = FixedIncomePosition(
+        name="X", initial_amount=1000, purchase_date=date(2023, 1, 1),
+        indexer="prefixado", rate=0.10,
+    )
+    portfolio = simulate_fixed_income(
+        positions=[pos], macro=macro, horizon_years=2,
+        start_date=date(2025, 1, 1),
+    )
+    proj = portfolio.projections[0]
+    # Year 0 (today, 2025-01-01): holding=731 days (2024 is leap) → IR=15%
+    # gross = 1000 * 1.1^(731/365), net = 1000 + (gross-1000)*0.85
+    expected_gross = 1000.0 * 1.1 ** (731 / 365)
+    expected_net = 1000.0 + (expected_gross - 1000.0) * 0.85
+    np.testing.assert_allclose(proj.gross_values[0], expected_gross, rtol=1e-6)
+    np.testing.assert_allclose(proj.net_values[0], expected_net, rtol=1e-6)
+
+
+def test_portfolio_totals_somam_corretamente_multiplas_posicoes(macro):
+    from models import simulate_fixed_income
+    a = FixedIncomePosition(
+        name="A", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="prefixado", rate=0.10, is_tax_exempt=True,
+    )
+    b = FixedIncomePosition(
+        name="B", initial_amount=2000, purchase_date=date(2025, 1, 1),
+        indexer="prefixado", rate=0.05, is_tax_exempt=True,
+    )
+    portfolio = simulate_fixed_income(
+        positions=[a, b], macro=macro, horizon_years=2,
+        start_date=date(2025, 1, 1),
+    )
+    assert portfolio.total_initial == 3000.0
+    # Year 1: A = 1000*1.1 = 1100, B = 2000*1.05 = 2100, total = 3200
+    np.testing.assert_allclose(portfolio.total_gross[1], 3200.0, rtol=1e-6)
+    np.testing.assert_allclose(portfolio.total_net[1], 3200.0, rtol=1e-6)  # both isentas
