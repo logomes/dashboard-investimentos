@@ -7,6 +7,7 @@ dashboard. Updating values here propagates to every screen.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Final, Literal
 
 
@@ -200,6 +201,24 @@ class BenchmarkParams:
 
     def net_yield(self) -> float:
         return self.selic_rate * (1 - self.tax_rate)
+
+
+# ---------- Renda Fixa (fixed-income positions) ----------
+
+IndexerKind = Literal["prefixado", "cdi", "selic", "ipca"]
+
+
+@dataclass(slots=True)
+class FixedIncomePosition:
+    """One fixed-income holding (CDB, LCI, Tesouro, debênture, etc.)."""
+    name: str
+    initial_amount: float
+    purchase_date: date
+    indexer: IndexerKind
+    rate: float
+    maturity_date: date | None = None
+    is_tax_exempt: bool = False
+    color: str = "#3498DB"
 
 
 # ---------- Visual palette ----------
