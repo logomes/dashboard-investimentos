@@ -476,3 +476,34 @@ def distribution_histogram_chart(mc_result, target: float = 0.0) -> go.Figure:
     )
     fig.update_xaxes(tickformat=",.0f", tickprefix="R$ ")
     return fig
+
+
+def fixed_income_evolution_chart(portfolio) -> go.Figure:
+    """Line chart with net evolution per fixed-income position over time."""
+    fig = go.Figure()
+    for proj in portfolio.projections:
+        fig.add_trace(go.Scatter(
+            x=proj.years,
+            y=proj.net_values,
+            mode="lines+markers",
+            name=proj.position.name,
+            line=dict(color=proj.position.color, width=3),
+            marker=dict(size=6),
+            hovertemplate=(
+                "<b>%{fullData.name}</b><br>"
+                "Ano %{x}<br>"
+                "Líquido: R$ %{y:,.0f}<extra></extra>"
+            ),
+        ))
+
+    fig.update_layout(
+        **_LAYOUT_DEFAULTS,
+        title="Evolução líquida por posição",
+        xaxis_title="Anos",
+        yaxis_title="Valor líquido (R$)",
+        hovermode="x unified",
+        height=440,
+    )
+    fig.update_yaxes(tickformat=",.0f", tickprefix="R$ ")
+    fig.update_xaxes(dtick=1)
+    return fig

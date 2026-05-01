@@ -336,3 +336,27 @@ def test_csv_indexador_invalido_levanta_validation_error():
     }
     with pytest.raises(ValueError, match="indexer"):
         FixedIncomePosition.from_record(bad)
+
+
+def test_fixed_income_chart_smoke(macro):
+    """Chart builder produces a Plotly figure with one trace per position."""
+    from models import simulate_fixed_income
+    from charts import fixed_income_evolution_chart
+    positions = [
+        FixedIncomePosition(
+            name="A", initial_amount=1000, purchase_date=date(2025, 1, 1),
+            indexer="prefixado", rate=0.10,
+        ),
+        FixedIncomePosition(
+            name="B", initial_amount=2000, purchase_date=date(2025, 1, 1),
+            indexer="cdi", rate=1.00, is_tax_exempt=True,
+        ),
+    ]
+    portfolio = simulate_fixed_income(
+        positions=positions, macro=macro, horizon_years=3,
+        start_date=date(2025, 1, 1),
+    )
+    fig = fixed_income_evolution_chart(portfolio)
+    assert len(fig.data) == 2
+    assert fig.data[0].name == "A"
+    assert fig.data[1].name == "B"
