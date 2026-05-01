@@ -56,3 +56,38 @@ def test_position_creation_with_all_fields():
     )
     assert pos.maturity_date == date(2035, 8, 1)
     assert pos.color == "#E74C3C"
+
+
+def test_effective_rate_prefixado(macro):
+    pos = FixedIncomePosition(
+        name="X", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="prefixado", rate=0.12,
+    )
+    assert pos.effective_annual_rate(macro) == pytest.approx(0.12)
+
+
+def test_effective_rate_cdi_percentual(macro):
+    # 100% CDI with cdi=0.1465 → 0.1465
+    pos = FixedIncomePosition(
+        name="X", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="cdi", rate=1.00,
+    )
+    assert pos.effective_annual_rate(macro) == pytest.approx(0.1465)
+
+
+def test_effective_rate_selic_com_spread(macro):
+    # Selic + 0.1% with selic=0.1475 → 0.1485
+    pos = FixedIncomePosition(
+        name="X", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="selic", rate=0.001,
+    )
+    assert pos.effective_annual_rate(macro) == pytest.approx(0.1485)
+
+
+def test_effective_rate_ipca_compoe_corretamente(macro):
+    # IPCA+6% with ipca=0.048 → (1.048)(1.06) - 1 = 0.11088
+    pos = FixedIncomePosition(
+        name="X", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="ipca", rate=0.06,
+    )
+    assert pos.effective_annual_rate(macro) == pytest.approx(0.11088)

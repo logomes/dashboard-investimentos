@@ -220,6 +220,18 @@ class FixedIncomePosition:
     is_tax_exempt: bool = False
     color: str = "#3498DB"
 
+    def effective_annual_rate(self, macro: "MacroParams") -> float:
+        """Convert the position's indexer + rate into a nominal annual rate."""
+        match self.indexer:
+            case "prefixado":
+                return self.rate
+            case "cdi":
+                return macro.cdi * self.rate
+            case "selic":
+                return macro.selic + self.rate
+            case "ipca":
+                return (1 + macro.ipca) * (1 + self.rate) - 1
+
 
 # ---------- Visual palette ----------
 
