@@ -15,6 +15,7 @@ import pandas as pd
 from config import (
     BenchmarkParams,
     FinancingParams,
+    FixedIncomePosition,
     MonteCarloParams,
     PortfolioParams,
     RealEstateParams,
@@ -46,6 +47,25 @@ class MonteCarloResult:
     def prob_target(self, target: float) -> float:
         """Fração de trajetórias onde patrimônio final >= target."""
         return float((self.final_distribution >= target).mean())
+
+
+@dataclass(slots=True, frozen=True)
+class FixedIncomeProjection:
+    """Year-by-year projection for a single fixed-income position."""
+    position: FixedIncomePosition
+    years: np.ndarray              # 0, 1, ..., horizon
+    gross_values: np.ndarray       # nominal value at end of each year
+    net_values: np.ndarray         # value after IR (== gross if isento)
+    matured: np.ndarray            # bool — True from the maturity year onward
+
+
+@dataclass(slots=True, frozen=True)
+class FixedIncomePortfolio:
+    """Aggregate of all fixed-income projections plus per-year totals."""
+    projections: list[FixedIncomeProjection]
+    total_gross: np.ndarray
+    total_net: np.ndarray
+    total_initial: float
 
 
 def _draw_normal_returns(

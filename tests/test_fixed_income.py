@@ -155,3 +155,26 @@ def test_ir_isento_zero_independente_do_holding():
     assert pos.applicable_ir_rate(date(2025, 1, 1)) == 0.0
     assert pos.applicable_ir_rate(date(2025, 6, 1)) == 0.0
     assert pos.applicable_ir_rate(date(2030, 1, 1)) == 0.0
+
+
+def test_projection_and_portfolio_dataclasses_construct():
+    from models import FixedIncomeProjection, FixedIncomePortfolio
+    pos = FixedIncomePosition(
+        name="X", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="prefixado", rate=0.10,
+    )
+    proj = FixedIncomeProjection(
+        position=pos,
+        years=np.arange(4),
+        gross_values=np.array([1000, 1100, 1210, 1331], dtype=float),
+        net_values=np.array([1000, 1082.5, 1178.5, 1281.35]),
+        matured=np.zeros(4, dtype=bool),
+    )
+    portfolio = FixedIncomePortfolio(
+        projections=[proj],
+        total_gross=proj.gross_values.copy(),
+        total_net=proj.net_values.copy(),
+        total_initial=1000.0,
+    )
+    assert portfolio.total_initial == 1000.0
+    assert len(portfolio.projections) == 1
