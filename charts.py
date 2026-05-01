@@ -22,10 +22,16 @@ _LAYOUT_DEFAULTS = dict(
     template="plotly_white",
     font=dict(family="Inter, system-ui, sans-serif", size=13, color="#2C3E50"),
     title_font=dict(size=18, color="#1F3A5F"),
-    margin=dict(l=60, r=40, t=70, b=110),
+    margin=dict(l=60, r=40, t=70, b=50),
     plot_bgcolor="white",
     paper_bgcolor="white",
     hoverlabel=dict(font_size=12, font_family="Inter"),
+)
+
+# Apply on top of _LAYOUT_DEFAULTS for charts that show a horizontal legend
+# below the plot — extends bottom margin so axis title and legend don't collide.
+_BOTTOM_LEGEND = dict(
+    margin=dict(l=60, r=40, t=70, b=110),
     legend=dict(
         orientation="h", yanchor="top", y=-0.32,
         xanchor="center", x=0.5,
@@ -58,6 +64,7 @@ def patrimony_evolution_chart(results: Iterable[SimulationResult]) -> go.Figure:
 
     fig.update_layout(
         **_LAYOUT_DEFAULTS,
+        **_BOTTOM_LEGEND,
         title="Evolução do Patrimônio ao Longo do Tempo",
         xaxis_title="Anos",
         yaxis_title="Patrimônio (R$)",
@@ -89,6 +96,7 @@ def annual_income_chart(results: Iterable[SimulationResult]) -> go.Figure:
 
     fig.update_layout(
         **_LAYOUT_DEFAULTS,
+        **_BOTTOM_LEGEND,
         title="Renda Mensal Gerada (R$)",
         xaxis_title="Anos",
         yaxis_title="Renda Mensal (R$)",
@@ -200,6 +208,7 @@ def sensitivity_tornado_chart(df: pd.DataFrame, base_value: float) -> go.Figure:
 
     fig.update_layout(
         **_LAYOUT_DEFAULTS,
+        **_BOTTOM_LEGEND,
         title="Análise de Sensibilidade — Impacto no Patrimônio Final",
         xaxis_title="Variação do Patrimônio (R$)",
         barmode="overlay",
@@ -304,6 +313,7 @@ def income_vs_costs_waterfall(real_estate_params) -> go.Figure:
         increasing=dict(marker=dict(color=PALETTE["carteira"])),
         decreasing=dict(marker=dict(color=PALETTE["imovel"])),
         totals=dict(marker=dict(color=PALETTE["neutral"])),
+        hovertemplate="<b>%{x}</b><br>R$ %{y:,.0f}<extra></extra>",
     ))
 
     fig.update_layout(
@@ -444,6 +454,7 @@ def patrimony_band_chart(
 
     fig.update_layout(
         **_LAYOUT_DEFAULTS,
+        **_BOTTOM_LEGEND,
         title="Evolução do patrimônio — banda p10–p90 (Monte Carlo)",
         xaxis_title="Ano",
         yaxis_title="Patrimônio (R$)",
@@ -470,6 +481,11 @@ def distribution_histogram_chart(mc_result, target: float = 0.0) -> go.Figure:
         nbinsx=40,
         marker=dict(color=mc_result.color, opacity=0.7),
         name=mc_result.label,
+        hovertemplate=(
+            f"<b>{mc_result.label}</b><br>"
+            "Patrimônio: R$ %{x:,.0f}<br>"
+            "Frequência: %{y}<extra></extra>"
+        ),
     ))
     if target > 0:
         fig.add_vline(
