@@ -286,3 +286,53 @@ def test_portfolio_totals_somam_corretamente_multiplas_posicoes(macro):
     # Year 1: A = 1000*1.1 = 1100, B = 2000*1.05 = 2100, total = 3200
     np.testing.assert_allclose(portfolio.total_gross[1], 3200.0, rtol=1e-6)
     np.testing.assert_allclose(portfolio.total_net[1], 3200.0, rtol=1e-6)  # both isentas
+
+
+def test_csv_roundtrip_preserva_todos_os_campos():
+    """to_record → from_record should reconstruct the position exactly."""
+    original = FixedIncomePosition(
+        name="LCI Banco X 2027",
+        initial_amount=30_000.0,
+        purchase_date=date(2025, 3, 15),
+        indexer="cdi",
+        rate=0.95,
+        maturity_date=date(2027, 3, 15),
+        is_tax_exempt=True,
+    )
+    record = original.to_record()
+    rebuilt = FixedIncomePosition.from_record(record)
+    assert rebuilt.name == original.name
+    assert rebuilt.initial_amount == original.initial_amount
+    assert rebuilt.purchase_date == original.purchase_date
+    assert rebuilt.indexer == original.indexer
+    assert rebuilt.rate == original.rate
+    assert rebuilt.maturity_date == original.maturity_date
+    assert rebuilt.is_tax_exempt == original.is_tax_exempt
+
+
+def test_csv_roundtrip_handles_optional_maturity():
+    original = FixedIncomePosition(
+        name="CDB Pós-fixado",
+        initial_amount=5000.0,
+        purchase_date=date(2025, 1, 1),
+        indexer="cdi",
+        rate=1.05,
+        maturity_date=None,
+    )
+    record = original.to_record()
+    rebuilt = FixedIncomePosition.from_record(record)
+    assert rebuilt.maturity_date is None
+
+
+def test_csv_indexador_invalido_levanta_validation_error():
+    bad = {
+        "name": "X",
+        "initial_amount": 1000.0,
+        "purchase_date": "2025-01-01",
+        "indexer": "bitcoin",  # not a valid IndexerKind
+        "rate": 0.1,
+        "maturity_date": "",
+        "is_tax_exempt": False,
+    }
+    with pytest.raises(ValueError, match="indexer"):
+        FixedIncomePosition.from_record(bad)

@@ -250,6 +250,47 @@ class FixedIncomePosition:
             return 0.175
         return 0.15
 
+    _VALID_INDEXERS = ("prefixado", "cdi", "selic", "ipca")
+
+    def to_record(self) -> dict:
+        """Serialize to a flat dict suitable for pandas.DataFrame / CSV."""
+        return {
+            "name": self.name,
+            "initial_amount": self.initial_amount,
+            "purchase_date": self.purchase_date.isoformat(),
+            "indexer": self.indexer,
+            "rate": self.rate,
+            "maturity_date": self.maturity_date.isoformat() if self.maturity_date else "",
+            "is_tax_exempt": self.is_tax_exempt,
+        }
+
+    @classmethod
+    def from_record(cls, record: dict) -> "FixedIncomePosition":
+        """Build from a flat dict (one CSV row).
+
+        Raises ValueError if required fields are missing or `indexer` is invalid.
+        """
+        indexer = record.get("indexer", "")
+        if indexer not in cls._VALID_INDEXERS:
+            raise ValueError(
+                f"invalid indexer {indexer!r} — must be one of {cls._VALID_INDEXERS}"
+            )
+        maturity_raw = record.get("maturity_date", "")
+        maturity = (
+            date.fromisoformat(maturity_raw)
+            if isinstance(maturity_raw, str) and maturity_raw
+            else None
+        )
+        return cls(
+            name=str(record["name"]),
+            initial_amount=float(record["initial_amount"]),
+            purchase_date=date.fromisoformat(str(record["purchase_date"])),
+            indexer=indexer,
+            rate=float(record["rate"]),
+            maturity_date=maturity,
+            is_tax_exempt=bool(record.get("is_tax_exempt", False)),
+        )
+
 
 # ---------- Visual palette ----------
 
