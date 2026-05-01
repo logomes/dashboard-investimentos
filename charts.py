@@ -520,7 +520,7 @@ def fixed_income_evolution_chart(portfolio) -> go.Figure:
         ))
 
     fig.update_layout(
-        **_LAYOUT_DEFAULTS,
+        **{**_LAYOUT_DEFAULTS, **_BOTTOM_LEGEND},
         title="Evolução líquida por posição",
         xaxis_title="Anos",
         yaxis_title="Valor líquido (R$)",
