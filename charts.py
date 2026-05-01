@@ -22,12 +22,12 @@ _LAYOUT_DEFAULTS = dict(
     template="plotly_white",
     font=dict(family="Inter, system-ui, sans-serif", size=13, color="#2C3E50"),
     title_font=dict(size=18, color="#1F3A5F"),
-    margin=dict(l=60, r=40, t=70, b=50),
+    margin=dict(l=60, r=40, t=70, b=110),
     plot_bgcolor="white",
     paper_bgcolor="white",
     hoverlabel=dict(font_size=12, font_family="Inter"),
     legend=dict(
-        orientation="h", yanchor="bottom", y=-0.22,
+        orientation="h", yanchor="top", y=-0.32,
         xanchor="center", x=0.5,
         bgcolor="rgba(255,255,255,0.9)",
     ),
@@ -421,6 +421,11 @@ def patrimony_band_chart(
             mode="lines",
             line=dict(color=mc.color, width=2),
             name=f"{mc.label} p50",
+            hovertemplate=(
+                "<b>%{fullData.name}</b><br>"
+                "Ano %{x}<br>"
+                "Patrimônio: R$ %{y:,.0f}<extra></extra>"
+            ),
         ))
 
     if deterministic_results is not None:
@@ -430,6 +435,11 @@ def patrimony_band_chart(
                 mode="lines",
                 line=dict(color=det.color, width=2, dash="dash"),
                 name=f"{det.label} (det)",
+                hovertemplate=(
+                    "<b>%{fullData.name}</b><br>"
+                    "Ano %{x}<br>"
+                    "Patrimônio: R$ %{y:,.0f}<extra></extra>"
+                ),
             ))
 
     fig.update_layout(
@@ -437,6 +447,7 @@ def patrimony_band_chart(
         title="Evolução do patrimônio — banda p10–p90 (Monte Carlo)",
         xaxis_title="Ano",
         yaxis_title="Patrimônio (R$)",
+        hovermode="x unified",
         height=420,
     )
     fig.update_yaxes(tickformat=",.0f", tickprefix="R$ ")
