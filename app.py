@@ -689,31 +689,39 @@ def _empty_fi_row() -> dict:
     }
 
 
-def _row_to_position(row: dict, color: str) -> FixedIncomePosition | None:
-    """Coerce a data_editor row to FixedIncomePosition, or None if invalid.
+def _row_to_position(
+    row: dict, color: str,
+) -> tuple[FixedIncomePosition | None, str | None, str | None]:
+    """Coerce a data_editor row to (position, error_msg, warning_msg).
 
-    Validation rules (silent skip — st.warning displayed by render):
-        - name must be non-empty
-        - initial_amount > 0
-        - rate_pct > 0
-        - purchase_date <= today
-        - if maturity_date set, must be > purchase_date
+    - Empty/template rows (no name or amount<=0): returns (None, None, None) — silent skip
+    - purchase_date in the future: returns (None, error, None) — bloqueia
+    - maturity_date <= purchase_date: returns (None, error, None) — bloqueia
+    - rate_pct <= 0: returns (position, None, warning) — simula mas não cresce
+    - Otherwise: returns (position, None, None)
     """
     name = (row.get("name") or "").strip()
     if not name:
-        return None
+        return None, None, None
     initial = float(row.get("initial_amount") or 0)
     if initial <= 0:
-        return None
-    rate_pct = float(row.get("rate_pct") or 0)
-    if rate_pct <= 0:
-        return None
+        return None, None, None
+
     purchase = row.get("purchase_date")
-    if purchase is None or purchase > date.today():
-        return None
+    if purchase is None:
+        return None, None, None
+    if purchase > date.today():
+        return None, f"'{name}': data de aporte não pode ser futura.", None
+
     maturity = row.get("maturity_date")
     if maturity is not None and maturity <= purchase:
-        return None
+        return None, f"'{name}': vencimento deve ser posterior à data de aporte.", None
+
+    rate_pct = float(row.get("rate_pct") or 0)
+    warn = None
+    if rate_pct <= 0:
+        warn = f"'{name}': taxa zero ou negativa — posição não vai crescer."
+
     return FixedIncomePosition(
         name=name,
         initial_amount=initial,
@@ -723,7 +731,7 @@ def _row_to_position(row: dict, color: str) -> FixedIncomePosition | None:
         maturity_date=maturity,
         is_tax_exempt=bool(row.get("is_tax_exempt", False)),
         color=color,
-    )
+    ), None, warn
 
 
 def render_fixed_income(macro: MacroParams, horizon: int) -> None:
@@ -803,11 +811,21 @@ def render_fixed_income(macro: MacroParams, horizon: int) -> None:
 
     # ----- Build positions list -----
     positions = []
+    row_errors: list[str] = []
+    row_warnings: list[str] = []
     for i, row in enumerate(edited):
         color = _FI_PALETTE[i % len(_FI_PALETTE)]
-        pos = _row_to_position(row, color)
+        pos, err, warn = _row_to_position(row, color)
+        if err is not None:
+            row_errors.append(err)
+        if warn is not None:
+            row_warnings.append(warn)
         if pos is not None:
             positions.append(pos)
+    for msg in row_errors:
+        st.error(msg)
+    for msg in row_warnings:
+        st.warning(msg)
 
     # ----- CSV export (always available) -----
     if positions:
