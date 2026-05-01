@@ -232,6 +232,24 @@ class FixedIncomePosition:
             case "ipca":
                 return (1 + macro.ipca) * (1 + self.rate) - 1
 
+    def holding_days(self, at_date: date) -> int:
+        """Days elapsed between purchase_date and at_date (clamped at 0)."""
+        delta = (at_date - self.purchase_date).days
+        return max(0, delta)
+
+    def applicable_ir_rate(self, at_date: date) -> float:
+        """Brazilian regressive IR for fixed-income (0 if tax-exempt)."""
+        if self.is_tax_exempt:
+            return 0.0
+        days = self.holding_days(at_date)
+        if days <= 180:
+            return 0.225
+        if days <= 360:
+            return 0.20
+        if days <= 720:
+            return 0.175
+        return 0.15
+
 
 # ---------- Visual palette ----------
 

@@ -91,3 +91,67 @@ def test_effective_rate_ipca_compoe_corretamente(macro):
         indexer="ipca", rate=0.06,
     )
     assert pos.effective_annual_rate(macro) == pytest.approx(0.11088)
+
+
+def test_holding_days_simple():
+    pos = FixedIncomePosition(
+        name="X", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="prefixado", rate=0.10,
+    )
+    assert pos.holding_days(date(2025, 1, 1)) == 0
+    assert pos.holding_days(date(2025, 7, 1)) == 181
+    assert pos.holding_days(date(2026, 1, 1)) == 365
+
+
+def test_ir_regressivo_22_5_ate_180_dias():
+    pos = FixedIncomePosition(
+        name="X", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="prefixado", rate=0.10,
+    )
+    # day 0
+    assert pos.applicable_ir_rate(date(2025, 1, 1)) == pytest.approx(0.225)
+    # day 180 (still in first bracket)
+    assert pos.applicable_ir_rate(date(2025, 6, 30)) == pytest.approx(0.225)
+
+
+def test_ir_regressivo_20_entre_181_e_360():
+    pos = FixedIncomePosition(
+        name="X", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="prefixado", rate=0.10,
+    )
+    # day 181 (boundary)
+    assert pos.applicable_ir_rate(date(2025, 7, 1)) == pytest.approx(0.20)
+    # day 360
+    assert pos.applicable_ir_rate(date(2025, 12, 27)) == pytest.approx(0.20)
+
+
+def test_ir_regressivo_17_5_entre_361_e_720():
+    pos = FixedIncomePosition(
+        name="X", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="prefixado", rate=0.10,
+    )
+    # day 365
+    assert pos.applicable_ir_rate(date(2026, 1, 1)) == pytest.approx(0.175)
+    # day 720
+    assert pos.applicable_ir_rate(date(2026, 12, 22)) == pytest.approx(0.175)
+
+
+def test_ir_regressivo_15_acima_de_720():
+    pos = FixedIncomePosition(
+        name="X", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="prefixado", rate=0.10,
+    )
+    # day 721
+    assert pos.applicable_ir_rate(date(2026, 12, 23)) == pytest.approx(0.15)
+    # day 1095 (3 years)
+    assert pos.applicable_ir_rate(date(2028, 1, 1)) == pytest.approx(0.15)
+
+
+def test_ir_isento_zero_independente_do_holding():
+    pos = FixedIncomePosition(
+        name="LCI", initial_amount=1000, purchase_date=date(2025, 1, 1),
+        indexer="cdi", rate=0.95, is_tax_exempt=True,
+    )
+    assert pos.applicable_ir_rate(date(2025, 1, 1)) == 0.0
+    assert pos.applicable_ir_rate(date(2025, 6, 1)) == 0.0
+    assert pos.applicable_ir_rate(date(2030, 1, 1)) == 0.0
