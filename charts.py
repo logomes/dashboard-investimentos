@@ -63,8 +63,7 @@ def patrimony_evolution_chart(results: Iterable[SimulationResult]) -> go.Figure:
         ))
 
     fig.update_layout(
-        **_LAYOUT_DEFAULTS,
-        **_BOTTOM_LEGEND,
+        **{**_LAYOUT_DEFAULTS, **_BOTTOM_LEGEND},
         title="Evolução do Patrimônio ao Longo do Tempo",
         xaxis_title="Anos",
         yaxis_title="Patrimônio (R$)",
@@ -95,8 +94,7 @@ def annual_income_chart(results: Iterable[SimulationResult]) -> go.Figure:
         ))
 
     fig.update_layout(
-        **_LAYOUT_DEFAULTS,
-        **_BOTTOM_LEGEND,
+        **{**_LAYOUT_DEFAULTS, **_BOTTOM_LEGEND},
         title="Renda Mensal Gerada (R$)",
         xaxis_title="Anos",
         yaxis_title="Renda Mensal (R$)",
@@ -207,8 +205,7 @@ def sensitivity_tornado_chart(df: pd.DataFrame, base_value: float) -> go.Figure:
     fig.add_vline(x=0, line=dict(color="#34495E", width=2))
 
     fig.update_layout(
-        **_LAYOUT_DEFAULTS,
-        **_BOTTOM_LEGEND,
+        **{**_LAYOUT_DEFAULTS, **_BOTTOM_LEGEND},
         title="Análise de Sensibilidade — Impacto no Patrimônio Final",
         xaxis_title="Variação do Patrimônio (R$)",
         barmode="overlay",
@@ -453,8 +450,7 @@ def patrimony_band_chart(
             ))
 
     fig.update_layout(
-        **_LAYOUT_DEFAULTS,
-        **_BOTTOM_LEGEND,
+        **{**_LAYOUT_DEFAULTS, **_BOTTOM_LEGEND},
         title="Evolução do patrimônio — banda p10–p90 (Monte Carlo)",
         xaxis_title="Ano",
         yaxis_title="Patrimônio (R$)",
