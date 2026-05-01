@@ -338,6 +338,17 @@ def test_csv_indexador_invalido_levanta_validation_error():
         FixedIncomePosition.from_record(bad)
 
 
+def test_csv_handles_string_boolean_values():
+    """CSV imports may have 'true'/'false' as strings — must coerce correctly."""
+    record_true = {
+        "name": "X", "initial_amount": 1000.0, "purchase_date": "2025-01-01",
+        "indexer": "cdi", "rate": 1.0, "maturity_date": "", "is_tax_exempt": "true",
+    }
+    record_false = dict(record_true, is_tax_exempt="false")
+    assert FixedIncomePosition.from_record(record_true).is_tax_exempt is True
+    assert FixedIncomePosition.from_record(record_false).is_tax_exempt is False
+
+
 def test_fixed_income_chart_smoke(macro):
     """Chart builder produces a Plotly figure with one trace per position."""
     from models import simulate_fixed_income

@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import io
 
+from datetime import date
+
 import pandas as pd
 import streamlit as st
 
 from config import (
     BenchmarkParams,
     FinancingParams,
+    FixedIncomePosition,
     MacroParams,
     MonteCarloParams,
     PALETTE,
@@ -32,6 +35,7 @@ from models import (
     MonteCarloResult,
     sensitivity_real_estate,
     simulate_benchmark,
+    simulate_fixed_income,
     simulate_portfolio,
     simulate_portfolio_mc,
     simulate_real_estate,
@@ -43,6 +47,7 @@ from charts import (
     cost_breakdown_chart,
     debt_evolution_chart,
     distribution_histogram_chart,
+    fixed_income_evolution_chart,
     income_vs_costs_waterfall,
     patrimony_band_chart,
     portfolio_donut_chart,
@@ -656,6 +661,219 @@ def render_risk(
         )
 
 
+# ---------- Renda Fixa ----------
+
+_FI_PALETTE = [
+    "#3498DB", "#E67E22", "#9B59B6", "#1ABC9C",
+    "#E74C3C", "#16A085", "#F39C12", "#34495E",
+]
+
+_FI_INDEXER_LABELS = {
+    "prefixado": "Prefixado",
+    "cdi": "% CDI",
+    "selic": "Selic +",
+    "ipca": "IPCA +",
+}
+
+
+def _empty_fi_row() -> dict:
+    """A blank row to seed the data_editor."""
+    return {
+        "name": "",
+        "indexer": "cdi",
+        "rate_pct": 100.0,           # display as percent
+        "initial_amount": 0.0,
+        "purchase_date": date.today(),
+        "maturity_date": None,
+        "is_tax_exempt": False,
+    }
+
+
+def _row_to_position(row: dict, color: str) -> FixedIncomePosition | None:
+    """Coerce a data_editor row to FixedIncomePosition, or None if invalid.
+
+    Validation rules (silent skip — st.warning displayed by render):
+        - name must be non-empty
+        - initial_amount > 0
+        - rate_pct > 0
+        - purchase_date <= today
+        - if maturity_date set, must be > purchase_date
+    """
+    name = (row.get("name") or "").strip()
+    if not name:
+        return None
+    initial = float(row.get("initial_amount") or 0)
+    if initial <= 0:
+        return None
+    rate_pct = float(row.get("rate_pct") or 0)
+    if rate_pct <= 0:
+        return None
+    purchase = row.get("purchase_date")
+    if purchase is None or purchase > date.today():
+        return None
+    maturity = row.get("maturity_date")
+    if maturity is not None and maturity <= purchase:
+        return None
+    return FixedIncomePosition(
+        name=name,
+        initial_amount=initial,
+        purchase_date=purchase,
+        indexer=row.get("indexer", "cdi"),
+        rate=rate_pct / 100.0,
+        maturity_date=maturity,
+        is_tax_exempt=bool(row.get("is_tax_exempt", False)),
+        color=color,
+    )
+
+
+def render_fixed_income(macro: MacroParams, horizon: int) -> None:
+    st.markdown("## 📊 Renda Fixa")
+    st.caption(
+        "Cadastre suas posições. IR regressivo aplicado automaticamente "
+        "(22,5% → 20% → 17,5% → 15% conforme tempo de aporte)."
+    )
+
+    # ----- Persisted state -----
+    if "fi_positions" not in st.session_state:
+        st.session_state["fi_positions"] = [_empty_fi_row()]
+
+    # ----- CSV import / export row -----
+    col_in, col_out = st.columns(2)
+    with col_in:
+        uploaded = st.file_uploader("Carregar CSV", type=["csv"], key="fi_csv_upload")
+        if uploaded is not None:
+            try:
+                df_in = pd.read_csv(uploaded)
+                positions = [
+                    FixedIncomePosition.from_record(r) for r in df_in.to_dict("records")
+                ]
+                st.session_state["fi_positions"] = [
+                    {
+                        "name": p.name,
+                        "indexer": p.indexer,
+                        "rate_pct": p.rate * 100.0,
+                        "initial_amount": p.initial_amount,
+                        "purchase_date": p.purchase_date,
+                        "maturity_date": p.maturity_date,
+                        "is_tax_exempt": p.is_tax_exempt,
+                    }
+                    for p in positions
+                ]
+                st.success(f"{len(positions)} posições carregadas.")
+            except Exception as e:  # noqa: BLE001 — we want to display any failure
+                st.error(f"Falha ao ler CSV: {e}")
+
+    # ----- Editable positions table -----
+    st.markdown("### Posições")
+    edited = st.data_editor(
+        st.session_state["fi_positions"],
+        num_rows="dynamic",
+        column_config={
+            "name": st.column_config.TextColumn("Nome", required=True),
+            "indexer": st.column_config.SelectboxColumn(
+                "Indexador",
+                options=list(_FI_INDEXER_LABELS.keys()),
+                required=True,
+            ),
+            "rate_pct": st.column_config.NumberColumn(
+                "Taxa (%)",
+                help=(
+                    "Prefixado: taxa anual (ex: 12.00). "
+                    "CDI: % do CDI (ex: 100.00). "
+                    "Selic/IPCA: spread anual em pp (ex: 6.00 para IPCA+6%)."
+                ),
+                min_value=0.0, step=0.01, format="%.2f",
+            ),
+            "initial_amount": st.column_config.NumberColumn(
+                "Aporte (R$)", min_value=0.0, step=100.0, format="R$ %.2f",
+            ),
+            "purchase_date": st.column_config.DateColumn(
+                "Data aporte", format="YYYY-MM-DD",
+            ),
+            "maturity_date": st.column_config.DateColumn(
+                "Vencimento (opcional)", format="YYYY-MM-DD",
+            ),
+            "is_tax_exempt": st.column_config.CheckboxColumn(
+                "Isento IR", help="LCI, LCA, CRA, CRI, debênture incentivada",
+            ),
+        },
+        key="fi_editor",
+    )
+    st.session_state["fi_positions"] = edited
+
+    # ----- Build positions list -----
+    positions = []
+    for i, row in enumerate(edited):
+        color = _FI_PALETTE[i % len(_FI_PALETTE)]
+        pos = _row_to_position(row, color)
+        if pos is not None:
+            positions.append(pos)
+
+    # ----- CSV export (always available) -----
+    if positions:
+        export_df = pd.DataFrame([p.to_record() for p in positions])
+        with col_out:
+            st.download_button(
+                "📤 Baixar CSV",
+                data=export_df.to_csv(index=False).encode("utf-8"),
+                file_name=f"renda-fixa-{date.today().isoformat()}.csv",
+                mime="text/csv",
+            )
+    else:
+        with col_out:
+            st.info("Cadastre ao menos uma posição válida para exportar.")
+
+    # ----- Simulation + chart + summary table -----
+    if not positions:
+        st.info("Cadastre ao menos uma posição válida para ver a projeção.")
+        return
+
+    portfolio = simulate_fixed_income(positions, macro, horizon)
+
+    st.markdown("### Evolução líquida por posição")
+    st.plotly_chart(fixed_income_evolution_chart(portfolio), use_container_width=True)
+
+    # Summary table
+    rows = []
+    for proj in portfolio.projections:
+        p = proj.position
+        gross_end = float(proj.gross_values[-1])
+        net_end = float(proj.net_values[-1])
+        eff_rate = p.effective_annual_rate(macro)
+        rows.append({
+            "Nome": p.name,
+            "Indexador": _FI_INDEXER_LABELS[p.indexer],
+            "Taxa efetiva (%)": eff_rate * 100,
+            "Aporte (R$)": p.initial_amount,
+            "Bruto fim (R$)": gross_end,
+            "Líquido fim (R$)": net_end,
+            "Ganho líquido (R$)": net_end - p.initial_amount,
+        })
+    summary = pd.DataFrame(rows)
+    total_row = pd.DataFrame([{
+        "Nome": "Total",
+        "Indexador": "—",
+        "Taxa efetiva (%)": None,
+        "Aporte (R$)": portfolio.total_initial,
+        "Bruto fim (R$)": float(portfolio.total_gross[-1]),
+        "Líquido fim (R$)": float(portfolio.total_net[-1]),
+        "Ganho líquido (R$)": float(portfolio.total_net[-1]) - portfolio.total_initial,
+    }])
+    summary = pd.concat([summary, total_row], ignore_index=True)
+    st.markdown("### Resumo")
+    st.dataframe(
+        summary,
+        column_config={
+            "Taxa efetiva (%)": st.column_config.NumberColumn(format="%.2f"),
+            "Aporte (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+            "Bruto fim (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+            "Líquido fim (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+            "Ganho líquido (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+        },
+        use_container_width=True, hide_index=True,
+    )
+
+
 # ---------- Main ----------
 
 def main() -> None:
@@ -700,6 +918,7 @@ def main() -> None:
         "💸 Tributação",
         "🎲 Risco",
         "📥 Exportar",
+        "📊 Renda Fixa",
     ])
 
     re_result, pf_result, bench_result = _run_simulations(
@@ -723,6 +942,8 @@ def main() -> None:
     with tabs[6]:
         render_export(re_params, pf_params, bench_params, horizon, reinvest, macro,
                       re_result, pf_result, bench_result)
+    with tabs[7]:
+        render_fixed_income(macro, horizon)
 
     st.markdown("---")
     st.caption(

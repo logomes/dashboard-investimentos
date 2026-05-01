@@ -208,6 +208,17 @@ class BenchmarkParams:
 IndexerKind = Literal["prefixado", "cdi", "selic", "ipca"]
 
 
+def _coerce_bool(value) -> bool:
+    """Robustly parse 'true'/'false'/'1'/'0'/None/bool to bool."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes")
+    return False
+
+
 @dataclass(slots=True)
 class FixedIncomePosition:
     """One fixed-income holding (CDB, LCI, Tesouro, debênture, etc.)."""
@@ -288,7 +299,7 @@ class FixedIncomePosition:
             indexer=indexer,
             rate=float(record["rate"]),
             maturity_date=maturity,
-            is_tax_exempt=bool(record.get("is_tax_exempt", False)),
+            is_tax_exempt=_coerce_bool(record.get("is_tax_exempt", False)),
         )
 
 
