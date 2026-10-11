@@ -1,0 +1,6 @@
+# Override para instalar em Python 3.15 (uso: uv pip install ... --override overrides-py315.txt).
+# O pyarrow só tem wheel cp315 a partir do 26.0, mas o streamlit (até o nightly
+# de 2026-10-10) limita pyarrow<26. O app foi verificado com pyarrow 26.
+# Remover quando o streamlit liberar pyarrow>=26. O deploy no Streamlit Cloud
+# não usa este arquivo.
+pyarrow>=26

@@ -27,13 +27,19 @@ dashboard/
 
 ## Setup
 
+Requer Python 3.15 e [uv](https://docs.astral.sh/uv/).
+
 ```bash
 cd dashboard
-python -m venv .venv
+uv venv -p 3.15 .venv
 source .venv/bin/activate              # ou .venv\Scripts\activate no Windows
-pip install -r requirements.txt
+uv pip install -r requirements.txt -r requirements-dev.txt --override overrides-py315.txt
 streamlit run app.py
 ```
+
+> O `--override` força o `pyarrow>=26`, a primeira versão com wheel para Python 3.15.
+> Sem ele, a instalação falha porque o streamlit ainda limita `pyarrow<26`.
+> Veja `overrides-py315.txt`.
 
 Acesse `http://localhost:8501` no navegador.
 
